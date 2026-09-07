@@ -1,0 +1,383 @@
+{
+  "generated_at": "2026-09-07T14:31:10.032Z",
+  "nodes": {
+    "C-MSP": {
+      "id": "C-MSP",
+      "type": "concept",
+      "title": "Microsandbox-backed runtime",
+      "summary": "Requirements for the microsandbox-backed runtime: mounted credentials, network-profile containment, host mounts, port forwarding, verb surface, import seam.",
+      "refs": [
+        "C-HERDR-PLUGIN-MSB",
+        "MSP-R-001",
+        "MSP-R-002",
+        "MSP-R-003",
+        "MSP-R-005",
+        "MSP-R-007",
+        "MSP-R-009",
+        "MSP-R-004",
+        "MSP-R-006",
+        "MSP-R-008",
+        "MSP-R-010",
+        "MSP-R-011"
+      ],
+      "inbound": [
+        "MSP-R-006",
+        "MSP-R-002",
+        "MSP-R-007",
+        "MSP-R-001",
+        "MSP-R-010",
+        "MSP-R-008",
+        "MSP-R-009",
+        "MSP-R-003",
+        "MSP-R-004",
+        "MSP-R-011",
+        "MSP-R-005",
+        "C-HERDR-PLUGIN-MSB"
+      ],
+      "byteSize": 9877,
+      "relPath": "msp/README.md",
+      "status": "active",
+      "pattern": null,
+      "verification": null,
+      "criticality": "must",
+      "concept": null,
+      "parent": "C-HERDR-PLUGIN-MSB",
+      "ears": null,
+      "anchor": null,
+      "why": null,
+      "fitCriterion": null,
+      "source": null,
+      "views": null
+    },
+    "MSP-R-006": {
+      "id": "MSP-R-006",
+      "type": "requirement",
+      "title": "A sandbox listener on a remote host is reachable from the laptop on the same port and is torn down with the sandbox",
+      "summary": "A sandbox listener on a remote host is reachable from the laptop on the same port and is torn down with the sandbox",
+      "refs": [
+        "C-MSP"
+      ],
+      "inbound": [
+        "C-MSP"
+      ],
+      "byteSize": 2662,
+      "relPath": "msp/requirements/msp-r-006-same-port-forwarding.md",
+      "status": "active",
+      "pattern": "event",
+      "verification": "unverified",
+      "criticality": "must",
+      "concept": "C-MSP",
+      "parent": null,
+      "ears": null,
+      "anchor": "msp-r-006",
+      "why": null,
+      "fitCriterion": null,
+      "source": null,
+      "views": null
+    },
+    "MSP-R-002": {
+      "id": "MSP-R-002",
+      "type": "requirement",
+      "title": "The real credential is present in the guest and the network profile is the only boundary",
+      "summary": "The real credential is present in the guest and the network profile is the only boundary",
+      "refs": [
+        "C-MSP",
+        "MSP-R-001",
+        "MSP-R-005",
+        "MSP-R-011"
+      ],
+      "inbound": [
+        "C-MSP",
+        "MSP-R-001",
+        "MSP-R-011",
+        "MSP-R-005"
+      ],
+      "byteSize": 3503,
+      "relPath": "msp/requirements/msp-r-002-credential-in-guest-containment.md",
+      "status": "active",
+      "pattern": "ubiquitous",
+      "verification": "unverified",
+      "criticality": "must",
+      "concept": "C-MSP",
+      "parent": null,
+      "ears": null,
+      "anchor": "msp-r-002",
+      "why": null,
+      "fitCriterion": null,
+      "source": null,
+      "views": null
+    },
+    "MSP-R-007": {
+      "id": "MSP-R-007",
+      "type": "requirement",
+      "title": "The shipped verb set is declared and every absent nexus3 verb is named",
+      "summary": "The shipped verb set is declared and every absent nexus3 verb is named",
+      "refs": [
+        "C-MSP"
+      ],
+      "inbound": [
+        "C-MSP"
+      ],
+      "byteSize": 2300,
+      "relPath": "msp/requirements/msp-r-007-declared-verb-surface.md",
+      "status": "active",
+      "pattern": "ubiquitous",
+      "verification": "unverified",
+      "criticality": "must",
+      "concept": "C-MSP",
+      "parent": null,
+      "ears": null,
+      "anchor": "msp-r-007",
+      "why": null,
+      "fitCriterion": null,
+      "source": null,
+      "views": null
+    },
+    "MSP-R-001": {
+      "id": "MSP-R-001",
+      "type": "requirement",
+      "title": "Credentials reach the guest only by a live mount of the host store",
+      "summary": "Credentials reach the guest only by a live mount of the host store",
+      "refs": [
+        "C-MSP",
+        "MSP-R-002",
+        "MSP-R-003"
+      ],
+      "inbound": [
+        "C-MSP",
+        "MSP-R-002",
+        "MSP-R-009",
+        "MSP-R-003"
+      ],
+      "byteSize": 2865,
+      "relPath": "msp/requirements/msp-r-001-credential-live-mount.md",
+      "status": "active",
+      "pattern": "event",
+      "verification": "unverified",
+      "criticality": "must",
+      "concept": "C-MSP",
+      "parent": null,
+      "ears": null,
+      "anchor": "msp-r-001",
+      "why": null,
+      "fitCriterion": null,
+      "source": null,
+      "views": null
+    },
+    "MSP-R-010": {
+      "id": "MSP-R-010",
+      "type": "requirement",
+      "title": "Every plugin action is reachable under a remote attach without a custom keybinding",
+      "summary": "Every plugin action is reachable under a remote attach without a custom keybinding",
+      "refs": [
+        "C-MSP"
+      ],
+      "inbound": [
+        "C-MSP"
+      ],
+      "byteSize": 2621,
+      "relPath": "msp/requirements/msp-r-010-herdr-remote-attach.md",
+      "status": "active",
+      "pattern": "state",
+      "verification": "unverified",
+      "criticality": "must",
+      "concept": "C-MSP",
+      "parent": null,
+      "ears": null,
+      "anchor": "msp-r-010",
+      "why": null,
+      "fitCriterion": null,
+      "source": null,
+      "views": null
+    },
+    "MSP-R-008": {
+      "id": "MSP-R-008",
+      "type": "requirement",
+      "title": "The runtime seam is enforced by the toolchain, not by review",
+      "summary": "The runtime seam is enforced by the toolchain, not by review",
+      "refs": [
+        "C-MSP"
+      ],
+      "inbound": [
+        "C-MSP"
+      ],
+      "byteSize": 2463,
+      "relPath": "msp/requirements/msp-r-008-runtime-seam-import-ban.md",
+      "status": "active",
+      "pattern": "unwanted",
+      "verification": "unverified",
+      "criticality": "must",
+      "concept": "C-MSP",
+      "parent": null,
+      "ears": null,
+      "anchor": "msp-r-008",
+      "why": null,
+      "fitCriterion": null,
+      "source": null,
+      "views": null
+    },
+    "MSP-R-009": {
+      "id": "MSP-R-009",
+      "type": "requirement",
+      "title": "No descendant of the deleted substrate and no runtime selector",
+      "summary": "No descendant of the deleted substrate and no runtime selector",
+      "refs": [
+        "C-MSP",
+        "MSP-R-001"
+      ],
+      "inbound": [
+        "C-MSP"
+      ],
+      "byteSize": 2724,
+      "relPath": "msp/requirements/msp-r-009-no-substrate-descendant.md",
+      "status": "active",
+      "pattern": "unwanted",
+      "verification": "unverified",
+      "criticality": "must",
+      "concept": "C-MSP",
+      "parent": null,
+      "ears": null,
+      "anchor": "msp-r-009",
+      "why": null,
+      "fitCriterion": null,
+      "source": null,
+      "views": null
+    },
+    "MSP-R-003": {
+      "id": "MSP-R-003",
+      "type": "requirement",
+      "title": "A token refresh propagates across the mount in both directions",
+      "summary": "A token refresh propagates across the mount in both directions",
+      "refs": [
+        "C-MSP",
+        "MSP-R-001"
+      ],
+      "inbound": [
+        "C-MSP",
+        "MSP-R-001"
+      ],
+      "byteSize": 3146,
+      "relPath": "msp/requirements/msp-r-003-refresh-read-through.md",
+      "status": "active",
+      "pattern": "event",
+      "verification": "unverified",
+      "criticality": "must",
+      "concept": "C-MSP",
+      "parent": null,
+      "ears": null,
+      "anchor": "msp-r-003",
+      "why": null,
+      "fitCriterion": null,
+      "source": null,
+      "views": null
+    },
+    "MSP-R-004": {
+      "id": "MSP-R-004",
+      "type": "requirement",
+      "title": "A host git worktree is mounted read-write and edits round-trip both ways",
+      "summary": "A host git worktree is mounted read-write and edits round-trip both ways",
+      "refs": [
+        "C-MSP"
+      ],
+      "inbound": [
+        "C-MSP"
+      ],
+      "byteSize": 1970,
+      "relPath": "msp/requirements/msp-r-004-worktree-rw-mount.md",
+      "status": "active",
+      "pattern": "event",
+      "verification": "unverified",
+      "criticality": "must",
+      "concept": "C-MSP",
+      "parent": null,
+      "ears": null,
+      "anchor": "msp-r-004",
+      "why": null,
+      "fitCriterion": null,
+      "source": null,
+      "views": null
+    },
+    "MSP-R-011": {
+      "id": "MSP-R-011",
+      "type": "requirement",
+      "title": "The forfeited zero-networking-privilege property is recorded, not left as a stale claim",
+      "summary": "The forfeited zero-networking-privilege property is recorded, not left as a stale claim",
+      "refs": [
+        "C-MSP",
+        "MSP-R-002"
+      ],
+      "inbound": [
+        "C-MSP",
+        "MSP-R-002"
+      ],
+      "byteSize": 2218,
+      "relPath": "msp/requirements/msp-r-011-privilege-posture-recorded.md",
+      "status": "active",
+      "pattern": "ubiquitous",
+      "verification": "unverified",
+      "criticality": "must",
+      "concept": "C-MSP",
+      "parent": null,
+      "ears": null,
+      "anchor": "msp-r-011",
+      "why": null,
+      "fitCriterion": null,
+      "source": null,
+      "views": null
+    },
+    "MSP-R-005": {
+      "id": "MSP-R-005",
+      "type": "requirement",
+      "title": "Egress is an explicit allowlist and the negative case is the test",
+      "summary": "Egress is an explicit allowlist and the negative case is the test",
+      "refs": [
+        "C-MSP",
+        "MSP-R-002"
+      ],
+      "inbound": [
+        "C-MSP",
+        "MSP-R-002"
+      ],
+      "byteSize": 2631,
+      "relPath": "msp/requirements/msp-r-005-egress-default-deny.md",
+      "status": "active",
+      "pattern": "unwanted",
+      "verification": "unverified",
+      "criticality": "must",
+      "concept": "C-MSP",
+      "parent": null,
+      "ears": null,
+      "anchor": "msp-r-005",
+      "why": null,
+      "fitCriterion": null,
+      "source": null,
+      "views": null
+    },
+    "C-HERDR-PLUGIN-MSB": {
+      "id": "C-HERDR-PLUGIN-MSB",
+      "type": "concept",
+      "title": "herdr-plugin-msb",
+      "summary": "Requirement graph for the microsandbox-backed herdr sandbox plugin that replaces the nexus3 cloud-hypervisor substrate.",
+      "refs": [
+        "C-MSP"
+      ],
+      "inbound": [
+        "C-MSP"
+      ],
+      "byteSize": 989,
+      "relPath": "README.md",
+      "status": "active",
+      "pattern": null,
+      "verification": null,
+      "criticality": "must",
+      "concept": null,
+      "parent": null,
+      "ears": null,
+      "anchor": null,
+      "why": null,
+      "fitCriterion": null,
+      "source": null,
+      "views": null
+    }
+  }
+}

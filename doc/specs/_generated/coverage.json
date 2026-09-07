@@ -1,0 +1,74 @@
+{
+  "total": 11,
+  "by_source": {
+    "unknown": 11
+  },
+  "by_concept": {
+    "C-MSP": 11
+  },
+  "by_verification": {
+    "unverified": 11
+  },
+  "by_criticality": {
+    "must": 11
+  },
+  "verified": 0,
+  "unverified_automated": [],
+  "by_requirement": {
+    "MSP-R-006": {
+      "declared": "unverified",
+      "verified": false,
+      "tests": []
+    },
+    "MSP-R-002": {
+      "declared": "unverified",
+      "verified": false,
+      "tests": []
+    },
+    "MSP-R-007": {
+      "declared": "unverified",
+      "verified": false,
+      "tests": []
+    },
+    "MSP-R-001": {
+      "declared": "unverified",
+      "verified": false,
+      "tests": []
+    },
+    "MSP-R-010": {
+      "declared": "unverified",
+      "verified": false,
+      "tests": []
+    },
+    "MSP-R-008": {
+      "declared": "unverified",
+      "verified": false,
+      "tests": []
+    },
+    "MSP-R-009": {
+      "declared": "unverified",
+      "verified": false,
+      "tests": []
+    },
+    "MSP-R-003": {
+      "declared": "unverified",
+      "verified": false,
+      "tests": []
+    },
+    "MSP-R-004": {
+      "declared": "unverified",
+      "verified": false,
+      "tests": []
+    },
+    "MSP-R-011": {
+      "declared": "unverified",
+      "verified": false,
+      "tests": []
+    },
+    "MSP-R-005": {
+      "declared": "unverified",
+      "verified": false,
+      "tests": []
+    }
+  }
+}
