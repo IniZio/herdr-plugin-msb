@@ -95,7 +95,17 @@ This is why the code offers both a directory mount and both writer styles. The
 hazard is structural; the measured answer to which combination is reliable
 under live refresh belongs in the test results, not here.
 
-<!-- MEASURED: propagation results, see internal/core/credmount/livemsb -->
+Measured, live, against a real `msb` guest with `--mount-file`
+(`internal/core/credmount/livemsb/credmount_live_test.go`, subtest
+`AC2_host_refresh_midsession`): **both** write modes propagate. An in-place
+`O_TRUNC` rewrite (`SaveInPlace`) is visible in the guest, and so is a
+sibling-temp-plus-`rename` (`Save`) — the guest read the post-rename bytes
+through the same single-file mount. On this microsandbox version the file
+mount therefore resolves the host path per access rather than pinning the
+inode taken at mount time, so the inode hazard did not materialise and an
+in-place write is not *required* for propagation. It remains the safer
+default, because that resolution behaviour is a property of the runtime we do
+not control and is not part of any contract it publishes.
 
 ## Accepted cost — blast radius
 
@@ -110,7 +120,16 @@ The network profile is not containment until it is explicitly tightened, and
 that tightening is the work of a separate slice.
 
 The blast radius is asserted by a test in the suite, not only by this
-document. A future reader should check the test, not the claim here.
+document. A future reader should check the test, not the claim here:
+`AC4_guest_process_reads_token_blast_radius` reads the token from the mount
+inside the guest and compares its digest to the host file's.
+
+Measured shape of that loss: the mount preserves the host file's ownership and
+mode, which arrive in the guest as `0:0 600`. `msb exec` runs as root, so the
+guest's default process identity — the identity an agent in the sandbox
+actually has — reads the live token in full. A second, non-root guest user was
+denied (`Permission denied`). The mode is therefore a real boundary against
+additional guest users, and no boundary at all against the agent itself.
 
 ## Protected path
 
@@ -120,6 +139,36 @@ uses `~/.config/nexus3/creds.json` or an operator-named path instead.
 
 `internal/core/credmount/` enforces the protected path with an explicit guard
 and a test.
+
+## Live results, 2026-09-07
+
+The suite is `internal/core/credmount/livemsb/credmount_live_test.go`, run as
+`HERDR_MSB_LIVE=1 make test GOTEST_P=1 GOTEST_PARALLEL=1 GOTEST_ARGS='-tags
+live -v -timeout 25m -run TestAC'`. It boots one `s16-`-prefixed alpine guest
+at 1024 MiB with `~/.config/nexus3/creds.json` bind-mounted as a single file,
+installs `curl` in the guest, and reads the token out of the mount inside the
+guest at call time — never through an environment variable or a command line.
+
+A real `POST https://api.anthropic.com/v1/messages` from inside the guest,
+authorised only by the mounted token, returned **HTTP 200**. Two model ids
+were tried: `claude-3-5-haiku-20241022` returned HTTP 404
+`not_found_error: model: claude-3-5-haiku-20241022`, which is an
+authenticated answer and not an auth failure; `claude-haiku-4-5` returned 200.
+A dead token would have produced 401 and a blocked User-Agent a Cloudflare 403
+with error 1010, so neither of those was in play.
+
+The mid-session refresh half of the bet is **not proven**. Two single attempts,
+several minutes apart, at `RefreshFile(..., inPlace: true)` against
+`https://platform.claude.com/v1/oauth/token` both returned **HTTP 429**. No
+further attempt was made: the rule for this store is one attempt, then stop and
+report, because a refresh grant that is being rate-limited is exactly the wrong
+thing to hammer when the same refresh token is the operator's session. The
+refresher writes only on a 2xx, so the store was left holding its existing
+valid token. What that leaves open is the OAuth half — whether the guest's next
+call after a real refresh returns 200 or the F4 revocation 401. The mount half
+is settled by the propagation measurement above: new host bytes do reach the
+guest under both write modes, so a stale read is not the mechanism that would
+break it.
 
 No `auth login` flow is run here. A device-login reuse rotates the OAuth
 credentials and logs the operator out of their session. The credential file
