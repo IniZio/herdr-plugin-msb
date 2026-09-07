@@ -1,0 +1,4 @@
+/herdr-plugin-msb
+*.test
+*.out
+/vendor/
