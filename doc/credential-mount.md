@@ -194,3 +194,81 @@ break it. The remaining risk is a token this project never holds.
 No `auth login` flow is run here. A device-login reuse rotates the OAuth
 credentials and logs the operator out of their session. The credential file
 this project reads is obtained and renewed outside this project's scope.
+
+## s16-AC3 — write direction, measured 2026-09-07T19:21Z
+
+`TestGuestWriteDirection` in `internal/core/credmount/livemsb/contention_live_test.go`
+boots one 512 MiB alpine guest with a working copy of the store bind-mounted at
+`/mnt/creds.json` and has the guest run `echo SENTINEL > /mnt/creds.json`.
+
+**AC3 holds on branch (a): the mount is read-write and a guest write reaches the
+host.** The guest write exited **0**, with empty stderr. The host file's bytes
+changed and its inode did **not** — `30850007` before and after — so the guest
+wrote in place through the mount rather than replacing the file. The test
+restored the working copy from the store afterwards; the real store was never
+the mount target in this test.
+
+The read-only alternative is not expressible: `msb create --help` exposes no
+`ro`, `:ro`, or `readonly` option for `--mount-file` or `--mount-dir`, and the
+harness silently ignores `BindMount.ReadOnly`. A guest-side refresh writer is
+therefore possible, and a guest that writes the file also has the power to
+corrupt the operator's credential store. That widens the blast radius recorded
+above from read to read-write.
+
+## s16-AC6 — BLOCKED, and the credential store was destroyed measuring it
+
+`TestConcurrentMountContention` boots two 1024 MiB guests on the same
+single-file mount and then refreshes on the host before letting either guest
+call the API. It **SKIPPED both times** — the refresh never succeeded, so the
+revocation half of F4 was never exercised. **AC6 is BLOCKED, not met.** No
+green result may be read out of this run: the sandbox pair was created and both
+guests read the same mount, but a contention finding without a completed
+refresh is vacuous.
+
+The measurable half, taken by hand with the same mount and no refresh: two
+sandboxes (`s16-manual-a`, `s16-manual-b`) both read the token out of one shared
+mount and both got the identical HTTP status. Sharing one file across two
+guests is not itself the failure mode.
+
+The blocking cause is not the 429 recorded above. It is a defect in this
+package, and it consumed the operator's credentials:
+
+| # | UTC | outcome |
+|---|-----|---------|
+| 5 | 2026-09-07T19:22:05 | HTTP 2xx, `parse token response: unexpected end of JSON input` |
+| 6 | 2026-09-07T19:32:33 | HTTP 400 `{"error": "invalid_grant", "error_description": "Refresh token not found or invalid"}` |
+
+Attempt 5 took the success path — the non-2xx branch in `Refresh` was not
+entered — so the server issued a new token pair. `Refresh` then read the
+response through `io.ReadAll(io.LimitReader(resp.Body, 512))`, could not parse
+the result, and returned an error, which discards the new pair without writing
+it. The store was left byte-identical, holding the pair the server had just
+rotated away.
+
+Both halves of that are now measured, not inferred. A guest call with the
+stored access token returned **HTTP 401** with
+`{"type":"authentication_error","message":"OAuth access token has been
+revoked."}` — the `revoked` shape of F4, arrived at without any second party,
+30 minutes inside the token's nominal validity (`expires_at`
+`2026-09-07T19:52:36Z`). Attempt 6 then proved the refresh token had been
+rotated too: `invalid_grant`.
+
+The 512-byte cap is now `1<<20` for the body read, keeping the 200-character
+truncation only for the error preview. That fixes the next refresh; it cannot
+undo this one.
+
+**Operator action required: the store at `~/.config/nexus3/creds.json` is dead.**
+Its access token is revoked and its refresh token is invalid. It is still valid
+JSON and its `expires_at` still reads `2026-09-07T19:52:36Z`, so nothing in the
+file signals the state — only an API call does. The `/tmp` backup is a copy of
+the same dead pair. Recovery needs a fresh login, which is outside this
+project's scope and was deliberately not attempted here.
+
+Two smaller defects were fixed in the same file while measuring. The guest
+status parser took `grep 'HTTP/' | tail -1`, and busybox `wget` writes its own
+`wget: server returned error: HTTP/1.1 401 Unauthorized` line last, so every
+non-2xx parsed as `STATUS=server` — the exact case AC6's `both401` invariant
+exists to catch. It now matches `HTTP/1.x NNN` directly. The probe body also
+asked for `claude-3-5-haiku-20241022`, whose 404 is an authenticated answer but
+not a positive one; it now asks for `claude-haiku-4-5`, which returns 200 on a
+live token.

@@ -53,7 +53,7 @@ func copyCredFile(src, dst string) error {
 
 // guestAPIScript reads the access_token from guestPath and POSTs to Anthropic, printing "STATUS=<N>".
 func guestAPIScript(guestPath string) string {
-	body := `{"model":"claude-3-5-haiku-20241022","max_tokens":8,"messages":[{"role":"user","content":"ping"}]}`
+	body := `{"model":"claude-haiku-4-5","max_tokens":8,"messages":[{"role":"user","content":"ping"}]}`
 	return fmt.Sprintf(
 		`TOKEN=$(grep '"access_token"' %s | awk -F'"' '{print $4}'); `+
 			`OUT=$(wget -q -O - --server-response `+
@@ -63,7 +63,7 @@ func guestAPIScript(guestPath string) string {
 			`--header="anthropic-beta: oauth-2025-04-20" `+
 			`--header="content-type: application/json" `+
 			`%s 2>&1); `+
-			`CODE=$(echo "$OUT" | grep 'HTTP/' | tail -1 | awk '{print $2}'); `+
+			`CODE=$(echo "$OUT" | grep -oE 'HTTP/1\.[01] [0-9][0-9][0-9]' | tail -1 | awk '{print $2}'); `+
 			`echo "STATUS=$CODE"`,
 		guestPath, body, apiURL,
 	)

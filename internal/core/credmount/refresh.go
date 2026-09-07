@@ -61,7 +61,7 @@ func (r Refresher) Refresh(ctx context.Context, c Credentials) (Credentials, err
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		preview := string(body)
 		if len(preview) > 200 {
