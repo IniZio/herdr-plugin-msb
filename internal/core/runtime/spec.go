@@ -14,6 +14,7 @@ type SandboxSpec struct {
 	Name         string
 	ImageRef     string
 	VCPUs        uint32
+	MemoryMiB    uint32
 	Motive       string
 	RemoveOnExit bool
 	Mounts       []Mount

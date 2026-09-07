@@ -13,11 +13,6 @@ type NetRule struct {
 	Port   uint16
 }
 
-type ProxyEndpoint struct {
-	Host string
-	Port uint16
-}
-
 type Mount struct {
 	HostPath  string
 	GuestPath string
