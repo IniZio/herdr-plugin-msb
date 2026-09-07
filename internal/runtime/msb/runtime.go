@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	coreruntime "github.com/IniZio/herdr-plugin-msb/internal/core/runtime"
+	"github.com/IniZio/herdr-plugin-msb/internal/core/netprofile"
 	msbsdk "github.com/superradcompany/microsandbox/sdk/go"
 )
 
@@ -175,7 +176,15 @@ func (r *Runtime) Create(ctx context.Context, spec coreruntime.SandboxSpec) (cor
 	return refFromHandle(fresh), nil
 }
 
+func withDefaultNetProfile(spec coreruntime.SandboxSpec) coreruntime.SandboxSpec {
+	if len(spec.NetRules) == 0 {
+		netprofile.Apply(&spec)
+	}
+	return spec
+}
+
 func (r *Runtime) CreateAndBoot(ctx context.Context, spec coreruntime.SandboxSpec) (coreruntime.SandboxRef, error) {
+	spec = withDefaultNetProfile(spec)
 	name := SDKName(spec.Project, spec.Name)
 	if name == "" {
 		return coreruntime.SandboxRef{}, fmt.Errorf("msb: spec has no name")
