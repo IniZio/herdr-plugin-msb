@@ -157,18 +157,39 @@ authenticated answer and not an auth failure; `claude-haiku-4-5` returned 200.
 A dead token would have produced 401 and a blocked User-Agent a Cloudflare 403
 with error 1010, so neither of those was in play.
 
-The mid-session refresh half of the bet is **not proven**. Two single attempts,
-several minutes apart, at `RefreshFile(..., inPlace: true)` against
-`https://platform.claude.com/v1/oauth/token` both returned **HTTP 429**. No
-further attempt was made: the rule for this store is one attempt, then stop and
-report, because a refresh grant that is being rate-limited is exactly the wrong
-thing to hammer when the same refresh token is the operator's session. The
-refresher writes only on a 2xx, so the store was left holding its existing
-valid token. What that leaves open is the OAuth half — whether the guest's next
-call after a real refresh returns 200 or the F4 revocation 401. The mount half
-is settled by the propagation measurement above: new host bytes do reach the
+The mid-session refresh half of the bet is **still not proven — blocked on a
+rate limit, not on a defect.** Four attempts at `RefreshFile(..., inPlace:
+true)` against `https://platform.claude.com/v1/oauth/token`, spread across
+32 minutes with growing waits between them, every one **HTTP 429**:
+
+| # | UTC | status | body |
+|---|-----|--------|------|
+| 1 | 2026-09-07T18:46:3x | 429 | `rate_limit_error` |
+| 2 | 2026-09-07T18:46:55 | 429 | `rate_limit_error` |
+| 3 | 2026-09-07T18:57:42 | 429 | `rate_limit_error` |
+| 4 | 2026-09-07T19:18:21 | 429 | `rate_limit_error` |
+
+Attempts 1 and 2 landed seconds apart because the first run's status was not
+read before the second was launched; 3 and 4 followed the intended 10-minute
+and 20-minute waits. The body is identical every time — `{"error":{"type":
+"rate_limit_error","message":"Rate limited. Please try again later."}}` — and
+no response carried a `Retry-After` header or named a window, so there was
+nothing to honour beyond the schedule. Backing off further was not tried and no
+workaround was: switching endpoint, grant type, account, or running any `auth
+login` flow would answer a different question than the one asked, and would
+rotate the operator's session.
+
+Both preconditions held on every attempt. The guest was mid-session with a
+**200** already on the board from the mounted token (`AC1`), and the store was
+verified byte-identical afterwards each time — `RefreshFile` returns before any
+write on a non-2xx (`internal/core/credmount/refresh.go`), so a rate-limited
+refresh leaves the credential file untouched. That is now measured, not assumed.
+
+What stays open is only the OAuth half of F4: whether the guest's next call
+after a real refresh returns 200 or the revocation 401. The mount half is
+settled by the propagation measurement above — new host bytes do reach the
 guest under both write modes, so a stale read is not the mechanism that would
-break it.
+break it. The remaining risk is a token this project never holds.
 
 No `auth login` flow is run here. A device-login reuse rotates the OAuth
 credentials and logs the operator out of their session. The credential file

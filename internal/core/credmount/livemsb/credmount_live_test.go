@@ -221,10 +221,15 @@ su probe -s /bin/sh -c /tmp/read.sh 2>&1`
 		refresher := credmount.Refresher{UserAgent: "curl/8.5.0"}
 		refreshCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
+		attemptAt := time.Now().UTC().Format(time.RFC3339)
 		updated, err := refresher.RefreshFile(refreshCtx, credsPath, true)
 		if err != nil {
-			t.Fatalf("AC2 BLOCKED: host OAuth refresh returned non-2xx on a single attempt; no retry is made and the store is left untouched by RefreshFile: %v", err)
+			beforeStore, loadErr := credmount.Load(credsPath)
+			untouched := loadErr == nil && digest(beforeStore.AccessToken) == digest(hostCreds.AccessToken)
+			t.Fatalf("AC2 BLOCKED: host OAuth refresh attempt at %s returned non-2xx (store_untouched=%v): %q",
+				attemptAt, untouched, strings.ReplaceAll(err.Error(), "\n", " "))
 		}
+		t.Logf("MEASURE AC2 refresh attempt at %s: 2xx", attemptAt)
 		newDigest := digest(updated.AccessToken)
 		t.Logf("MEASURE AC2 host refresh (RefreshFile inPlace=true): ok=true rotated=%v new_expires_in=%s new_digest=%s",
 			newDigest != oldTokenDigest, updated.ExpiresIn(time.Now()).Round(time.Second), short(newDigest))

@@ -71,6 +71,9 @@ func (r Refresher) Refresh(ctx context.Context, c Credentials) (Credentials, err
 			return Credentials{}, fmt.Errorf("HTTP %d: Cloudflare error 1010 — request blocked due to User-Agent; token is NOT necessarily dead: %s",
 				resp.StatusCode, preview)
 		}
+		if ra := resp.Header.Get("Retry-After"); ra != "" {
+			return Credentials{}, fmt.Errorf("HTTP %d (Retry-After: %s): %s", resp.StatusCode, ra, preview)
+		}
 		return Credentials{}, fmt.Errorf("HTTP %d: %s", resp.StatusCode, preview)
 	}
 
