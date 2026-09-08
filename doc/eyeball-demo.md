@@ -107,9 +107,11 @@ herdr-plugin-msb list
 
 herdr-plugin-msb status
 # → pending=1 acked=2   exit 0
+# Note: counts move as the local-agent polls and acknowledges forwards — this is a snapshot.
 
 herdr-plugin-msb declare -port 45455 -host engine-03 -notify
-# → null   exit 0
+# → null   exit 0   (port already pending — null is success, not an error)
+# → [{"id":3,...}]  exit 0   (port not yet pending — returns the newly queued entry)
 ```
 
 ## 6. Teardown (in order)
