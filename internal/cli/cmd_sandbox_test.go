@@ -3,6 +3,9 @@ package cli
 import (
 	"bytes"
 	"context"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"strings"
 	"testing"
 )
@@ -182,6 +185,67 @@ func TestShippedVerbRegistry(t *testing.T) {
 		Run(ctx, []string{verb}, &stdout, &stderr)
 		if !strings.Contains(stderr.String(), "unknown command") {
 			t.Errorf("declined verb %q: expected 'unknown command' in stderr, got: %s", verb, stderr.String())
+		}
+	}
+}
+
+func TestDispatchSetEquality(t *testing.T) {
+	declared := map[string]bool{
+		"help": true, "--help": true, "-h": true,
+		"create": true, "ps": true, "exec": true,
+		"start": true, "stop": true, "rm": true,
+		"declare": true, "status": true, "list": true, "local-agent": true,
+		"version": true,
+	}
+
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "run.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parse run.go: %v", err)
+	}
+
+	var sw *ast.SwitchStmt
+	for _, d := range f.Decls {
+		fn, ok := d.(*ast.FuncDecl)
+		if !ok || fn.Name.Name != "Run" || fn.Body == nil {
+			continue
+		}
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			if s, ok := n.(*ast.SwitchStmt); ok && sw == nil {
+				sw = s
+				return false
+			}
+			return true
+		})
+		break
+	}
+	if sw == nil {
+		t.Fatal("Run switch not found in run.go")
+	}
+
+	found := map[string]bool{}
+	for _, stmt := range sw.Body.List {
+		cc, ok := stmt.(*ast.CaseClause)
+		if !ok || cc.List == nil {
+			continue
+		}
+		for _, expr := range cc.List {
+			lit, ok := expr.(*ast.BasicLit)
+			if !ok || lit.Kind != token.STRING {
+				continue
+			}
+			found[strings.Trim(lit.Value, `"`)] = true
+		}
+	}
+
+	for verb := range found {
+		if !declared[verb] {
+			t.Errorf("run.go switch has undeclared case %q — add to declared set or remove the case", verb)
+		}
+	}
+	for verb := range declared {
+		if !found[verb] {
+			t.Errorf("declared verb %q missing from run.go switch — was it removed?", verb)
 		}
 	}
 }
