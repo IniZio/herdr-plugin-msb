@@ -1,6 +1,6 @@
 # CLI verb set
 
-Decision D-13: CLI parity with nexus3 is dropped. The nexus3 verb registry (37 registered
+CLI parity with nexus3 is dropped. The nexus3 verb registry (37 registered
 verbs, 35 visible, 2 hidden) is a reference list, not a target. This repo ships the
 minimum surface that satisfies its use cases. Every verb absent from the shipped set is
 named below with a specific reason, so a forgotten verb is distinguishable from a
@@ -66,12 +66,12 @@ accounted for below.
 | `ls` | Declined | nexus3 `ls` was a redundant alias for `ps`; only `ps` is adopted here; a second name for the same list operation adds surface for no gain |
 | `mcp` | Declined | This repo is itself a herdr plugin that runs as an MCP server; there is no separate MCP sub-process to manage |
 | `orca` | Declined | The nexus3 `orca` verb drove orca-specific workspace provisioning; orca integration is not applicable to this repo |
-| `pause` | Declined | microsandbox v0.6.17 has no pause API; the adapter returns `ErrUnsupported` (decision D-14 in `doc/mcp-tool-surface.md`); advertising a verb that always fails is worse than omitting it |
+| `pause` | Declined | microsandbox v0.6.17 has no pause API; the adapter returns `ErrUnsupported`; advertising a verb that always fails is worse than omitting it |
 | `ps` | **Adopted** | Name and semantics adopted; nexus3 `ps` delegated to `sandbox list` and was equivalent to `ls`; here `ps` is the canonical list verb and `ls` is declined as a redundant alias |
 | `reap` | Declined | nexus3 `reap` cleaned up orphaned per-sandbox supervisor processes and dangling lock files; this repo has no supervisor process model — there is no per-sandbox supervisor to reap |
 | `recover` | Declined | nexus3 `recover` recovered a sandbox whose supervisor had failed; no supervisor exists here, so there is nothing to recover |
 | `restore` | Declined | Snapshot restore was marked out-of-scope in the nexus3 spec itself |
-| `resume` | Declined | microsandbox v0.6.17 has no resume API; the adapter returns `ErrUnsupported` (decision D-14 in `doc/mcp-tool-surface.md`) |
+| `resume` | Declined | microsandbox v0.6.17 has no resume API; the adapter returns `ErrUnsupported` |
 | `rm` | **Adopted** | Name and semantics adopted without change |
 | `run` | Declined | `run` was a convenience composite (create → exec → remove) equivalent to `RunEphemeral`; composite operations belong in a higher-level orchestration layer, not on the primitive CLI surface (see `doc/mcp-tool-surface.md` named omissions) |
 | `sandbox` | Declined | nexus3 `sandbox` was a dispatch group verb whose sub-commands (`sandbox create`, `sandbox list`, etc.) are shipped here as flat top-level verbs; the group wrapper is unnecessary |

@@ -21,20 +21,21 @@ func syntheticNestedCreds(access, refresh string) string {
 
 func TestAC1LoopScriptReadsTokenOnce(t *testing.T) {
 	script := guestKeepAliveLoopScript("/mnt/creds.json", "https://stub.invalid", 3, 1)
-	tokenPat := `sed -n 's/.*"accessToken"`
+	cachedPat := "CACHED_DIG="
 	loopPat := "for I in "
-	tp := strings.Index(script, tokenPat)
 	lp := strings.Index(script, loopPat)
-	if tp < 0 {
-		t.Fatalf("script missing token extraction: %s", script)
-	}
 	if lp < 0 {
 		t.Fatalf("script missing for-loop: %s", script)
 	}
-	if tp > lp {
-		t.Fatalf("token extraction is INSIDE loop (tp=%d > lp=%d); script re-reads each iter", tp, lp)
+	cc := strings.Count(script, cachedPat)
+	if cc != 1 {
+		t.Fatalf("CACHED_DIG assigned %d times (want exactly 1); script re-caches token each iter: %s", cc, script)
 	}
-	t.Logf("MEASURE AC1 loop script: token at pos %d, loop at pos %d (token read once before loop)", tp, lp)
+	cp := strings.Index(script, cachedPat)
+	if cp > lp {
+		t.Fatalf("CACHED_DIG assignment is INSIDE loop (cp=%d > lp=%d); cached digest re-set each iter", cp, lp)
+	}
+	t.Logf("MEASURE AC1 loop script: CACHED_DIG assigned once at pos %d, loop at pos %d", cp, lp)
 }
 
 func TestAC2GuestRefreshMechanism(t *testing.T) {

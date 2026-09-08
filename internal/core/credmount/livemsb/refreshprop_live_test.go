@@ -97,7 +97,7 @@ func guestCall(t *testing.T, sb *livemsb.Sandbox, label string) (status, tokDige
 }
 
 func TestAC1KeepAlive(t *testing.T) {
-	// WAIVER D-2: synthetic credentials; token endpoint not contacted; API calls return 401.
+	// WAIVER D-2: synthetic credentials; token endpoint not contacted; loop monitors file digest changes only, makes no API calls.
 	if os.Getenv("HERDR_MSB_LIVE") != "1" {
 		t.Skip("HERDR_MSB_LIVE not set")
 	}
@@ -136,7 +136,7 @@ func TestAC1KeepAlive(t *testing.T) {
 
 	digA := digest(tokenA)
 	digB := digest(tokenB)
-	staleCount, freshCount := 0, 0
+	staleCount, freshCount, cachedBCount := 0, 0, 0
 	for _, line := range strings.Split(rawOut, "\n") {
 		if strings.Contains(line, "cached_digest="+digA[:12]) {
 			staleCount++
@@ -144,11 +144,20 @@ func TestAC1KeepAlive(t *testing.T) {
 		if strings.Contains(line, "file_digest="+digB[:12]) {
 			freshCount++
 		}
+		if strings.Contains(line, "cached_digest="+digB[:12]) {
+			cachedBCount++
+		}
 	}
-	t.Logf("MEASURE AC1: stale_iters=%d fresh_file_reads=%d (digA=%s digB=%s)",
-		staleCount, freshCount, digA[:12], digB[:12])
+	t.Logf("MEASURE AC1: stale_iters=%d fresh_file_reads=%d cached_became_B=%d (digA=%s digB=%s)",
+		staleCount, freshCount, cachedBCount, digA[:12], digB[:12])
 	if staleCount == 0 {
 		t.Fatalf("AC1 UNMET: no iteration reported stale cached token — loop may re-read each iter")
+	}
+	if freshCount == 0 {
+		t.Fatalf("AC1 UNMET: no iteration observed file_digest=digB — host rotation never reached the guest")
+	}
+	if cachedBCount > 0 {
+		t.Fatalf("AC1 UNMET: CACHED_DIG became digB in %d iters — loop is re-caching the rotated token", cachedBCount)
 	}
 }
 
