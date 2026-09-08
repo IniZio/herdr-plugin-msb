@@ -69,5 +69,6 @@ installable and drivable in that configuration.
   tracks confirming it. The fit criterion is written against observable behaviour
   rather than against the manifest keys, so a wrong ABI detail fails the test
   instead of quietly invalidating the node.
-- **Anchor** — Target constructs: the `herdr-plugin.toml` manifest and the
-  plugin action entry points. Not yet present.
+- **Anchor** — Target constructs: manifest at `herdr-plugin.toml` (repo root);
+  action entry points at `internal/cli/cmd_herdr_plugin.go:463` (`declare`),
+  `:465` (`status`), `:467` (`list`), dispatched from `internal/cli/run.go:24`.
