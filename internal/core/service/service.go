@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/IniZio/herdr-plugin-msb/internal/core/admission"
 	"github.com/IniZio/herdr-plugin-msb/internal/core/credmount"
 	coreruntime "github.com/IniZio/herdr-plugin-msb/internal/core/runtime"
 )
@@ -15,13 +16,13 @@ const (
 	DefaultGuestCredential = "/root/.claude/.credentials.json"
 	DefaultGuestCredDir    = "/root/.claude"
 	DefaultMemoryMiB       = 1024
-	MaxMemoryMiB           = 2048
+	MaxMemoryMiB           = admission.MaxSandboxMemoryMiB
 )
 
 var (
 	ErrNameRequired   = errors.New("service: sandbox name is required")
 	ErrImageRequired  = errors.New("service: image ref is required")
-	ErrMemoryTooLarge = errors.New("service: memory exceeds the 2048 MiB cap")
+	ErrMemoryTooLarge = fmt.Errorf("service: memory exceeds the %d MiB cap", MaxMemoryMiB)
 	ErrNotFound       = errors.New("service: sandbox not found")
 )
 
@@ -101,13 +102,20 @@ func (s *Service) Spec(opts CreateOptions) (coreruntime.SandboxSpec, error) {
 		}
 		spec.Mounts = append(spec.Mounts, m)
 	}
-	// NetRules left nil; single application point is runtime.go:105.
+	// NetRules left nil; single application point is msb.SandboxOptions.
 	return spec, nil
 }
 
 func (s *Service) Create(ctx context.Context, opts CreateOptions) (coreruntime.SandboxRef, error) {
 	spec, err := s.Spec(opts)
 	if err != nil {
+		return coreruntime.SandboxRef{}, err
+	}
+	var acct admission.Accountant
+	if a, ok := s.RT.(admission.Accountant); ok {
+		acct = a
+	}
+	if err := admission.Admit(ctx, acct, spec.MemoryMiB); err != nil {
 		return coreruntime.SandboxRef{}, err
 	}
 	if opts.Boot {

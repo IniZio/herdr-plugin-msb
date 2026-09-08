@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/IniZio/herdr-plugin-msb/internal/core/admission"
 	"github.com/IniZio/herdr-plugin-msb/internal/core/credmount"
 	coreruntime "github.com/IniZio/herdr-plugin-msb/internal/core/runtime"
 )
@@ -59,6 +60,16 @@ func (f *fakeRuntime) Exec(_ context.Context, ref coreruntime.SandboxRef, req co
 
 func (f *fakeRuntime) RunEphemeral(_ context.Context, _ coreruntime.SandboxSpec, _ coreruntime.ExecRequest) (coreruntime.ExecResult, error) {
 	return coreruntime.ExecResult{}, nil
+}
+
+type fakeAccountingRuntime struct {
+	fakeRuntime
+	committed    uint32
+	committedErr error
+}
+
+func (f *fakeAccountingRuntime) CommittedMemoryMiB(_ context.Context) (uint32, error) {
+	return f.committed, f.committedErr
 }
 
 func TestSpec_LeavesNetRulesNilForSingleApplicationPoint(t *testing.T) {
@@ -169,9 +180,9 @@ func TestSpec_Memory(t *testing.T) {
 		t.Errorf("MemoryMiB=2048 => %d", spec2.MemoryMiB)
 	}
 
-	_, err = svc.Spec(CreateOptions{Name: "x", ImageRef: "img", MemoryMiB: 2049})
+	_, err = svc.Spec(CreateOptions{Name: "x", ImageRef: "img", MemoryMiB: 8193})
 	if !errors.Is(err, ErrMemoryTooLarge) {
-		t.Errorf("MemoryMiB=2049: want ErrMemoryTooLarge, got %v", err)
+		t.Errorf("MemoryMiB=8193: want ErrMemoryTooLarge, got %v", err)
 	}
 }
 
@@ -192,7 +203,7 @@ func TestSpec_ValidationErrors(t *testing.T) {
 func TestCreate_BootFlag(t *testing.T) {
 	ctx := context.Background()
 
-	rt1 := &fakeRuntime{}
+	rt1 := &fakeAccountingRuntime{}
 	svc1 := New(rt1, "")
 	if _, err := svc1.Create(ctx, CreateOptions{Name: "x", ImageRef: "img", Boot: true}); err != nil {
 		t.Fatal(err)
@@ -201,13 +212,104 @@ func TestCreate_BootFlag(t *testing.T) {
 		t.Errorf("Boot=true: createAndBoot=%d create=%d, want 1/0", rt1.createAndBootCount, rt1.createCount)
 	}
 
-	rt2 := &fakeRuntime{}
+	rt2 := &fakeAccountingRuntime{}
 	svc2 := New(rt2, "")
 	if _, err := svc2.Create(ctx, CreateOptions{Name: "x", ImageRef: "img", Boot: false}); err != nil {
 		t.Fatal(err)
 	}
 	if rt2.createCount != 1 || rt2.createAndBootCount != 0 {
 		t.Errorf("Boot=false: create=%d createAndBoot=%d, want 1/0", rt2.createCount, rt2.createAndBootCount)
+	}
+}
+
+func TestCreate_AdmissionAdmitted(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv(admission.BudgetEnvVar, "3072")
+
+	rt := &fakeAccountingRuntime{committed: 2048}
+	svc := New(rt, "")
+	if _, err := svc.Create(ctx, CreateOptions{Name: "x", ImageRef: "img", MemoryMiB: 512, Boot: true}); err != nil {
+		t.Fatalf("Boot=true admitted: %v", err)
+	}
+	if rt.createAndBootCount != 1 {
+		t.Errorf("Boot=true: createAndBootCount=%d, want 1", rt.createAndBootCount)
+	}
+
+	rt2 := &fakeAccountingRuntime{committed: 2048}
+	svc2 := New(rt2, "")
+	if _, err := svc2.Create(ctx, CreateOptions{Name: "x", ImageRef: "img", MemoryMiB: 512, Boot: false}); err != nil {
+		t.Fatalf("Boot=false admitted: %v", err)
+	}
+	if rt2.createCount != 1 {
+		t.Errorf("Boot=false: createCount=%d, want 1", rt2.createCount)
+	}
+}
+
+func TestCreate_AdmissionRefused(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv(admission.BudgetEnvVar, "3072")
+
+	rt := &fakeAccountingRuntime{committed: 2048}
+	svc := New(rt, "")
+	_, err := svc.Create(ctx, CreateOptions{Name: "x", ImageRef: "img", MemoryMiB: 2048, Boot: false})
+	if !errors.Is(err, admission.ErrBudgetExceeded) {
+		t.Fatalf("Boot=false refused: want ErrBudgetExceeded, got %v", err)
+	}
+	if rt.createCount != 0 || rt.createAndBootCount != 0 {
+		t.Errorf("refused: create must not be reached, createCount=%d createAndBootCount=%d", rt.createCount, rt.createAndBootCount)
+	}
+
+	rt2 := &fakeAccountingRuntime{committed: 2048}
+	svc2 := New(rt2, "")
+	_, err = svc2.Create(ctx, CreateOptions{Name: "x", ImageRef: "img", MemoryMiB: 2048, Boot: true})
+	if !errors.Is(err, admission.ErrBudgetExceeded) {
+		t.Fatalf("Boot=true refused: want ErrBudgetExceeded, got %v", err)
+	}
+	if rt2.createCount != 0 || rt2.createAndBootCount != 0 {
+		t.Errorf("refused: create must not be reached, createCount=%d createAndBootCount=%d", rt2.createCount, rt2.createAndBootCount)
+	}
+}
+
+func TestCreate_FailClosedNoAccountant(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv(admission.BudgetEnvVar, "65536")
+
+	rt := &fakeRuntime{}
+	svc := New(rt, "")
+	_, err := svc.Create(ctx, CreateOptions{Name: "x", ImageRef: "img", MemoryMiB: 512})
+	if !errors.Is(err, admission.ErrCommittedUnknown) {
+		t.Fatalf("want ErrCommittedUnknown, got %v", err)
+	}
+	if rt.createCount != 0 || rt.createAndBootCount != 0 {
+		t.Errorf("fail-closed: create must not be reached, createCount=%d createAndBootCount=%d", rt.createCount, rt.createAndBootCount)
+	}
+}
+
+func TestCreate_FailClosedAccountantError(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv(admission.BudgetEnvVar, "65536")
+
+	rt := &fakeAccountingRuntime{committedErr: errors.New("probe failed")}
+	svc := New(rt, "")
+	_, err := svc.Create(ctx, CreateOptions{Name: "x", ImageRef: "img", MemoryMiB: 512})
+	if !errors.Is(err, admission.ErrCommittedUnknown) {
+		t.Fatalf("want ErrCommittedUnknown, got %v", err)
+	}
+	if rt.createCount != 0 || rt.createAndBootCount != 0 {
+		t.Errorf("fail-closed: create must not be reached, createCount=%d createAndBootCount=%d", rt.createCount, rt.createAndBootCount)
+	}
+}
+
+func TestSpec_CapRaised(t *testing.T) {
+	svc := New(&fakeRuntime{}, "")
+
+	if _, err := svc.Spec(CreateOptions{Name: "x", ImageRef: "img", MemoryMiB: 4096}); err != nil {
+		t.Errorf("MemoryMiB=4096: want nil, got %v", err)
+	}
+
+	_, err := svc.Spec(CreateOptions{Name: "x", ImageRef: "img", MemoryMiB: 8193})
+	if !errors.Is(err, ErrMemoryTooLarge) {
+		t.Errorf("MemoryMiB=8193: want ErrMemoryTooLarge, got %v", err)
 	}
 }
 

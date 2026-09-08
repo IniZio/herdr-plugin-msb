@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"strings"
 
-	coreruntime "github.com/IniZio/herdr-plugin-msb/internal/core/runtime"
+	"github.com/IniZio/herdr-plugin-msb/internal/core/admission"
 	"github.com/IniZio/herdr-plugin-msb/internal/core/netprofile"
+	coreruntime "github.com/IniZio/herdr-plugin-msb/internal/core/runtime"
 	msbsdk "github.com/superradcompany/microsandbox/sdk/go"
 )
 
@@ -184,6 +185,9 @@ func (r *Runtime) CreateAndBoot(ctx context.Context, spec coreruntime.SandboxSpe
 	name := SDKName(spec.Project, spec.Name)
 	if name == "" {
 		return coreruntime.SandboxRef{}, fmt.Errorf("msb: spec has no name")
+	}
+	if err := admission.Admit(ctx, r, spec.MemoryMiB); err != nil {
+		return coreruntime.SandboxRef{}, err
 	}
 	opts := append(SandboxOptions(spec), msbsdk.WithDetached())
 	sb, err := msbsdk.CreateSandbox(ctx, name, opts...)
