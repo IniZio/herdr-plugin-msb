@@ -34,6 +34,7 @@ copy-out step.
   modification.
 - **Verification**: unverified — no test exists. Target method: automated live.
 - **Criticality**: must
-- **Anchor** — Target construct: the mount specification list on the runtime
-  create request in `internal/core/runtime`, and its translation to a
-  microsandbox mount in `internal/runtime/msb`. Not yet present.
+- **Anchor** — Target construct: `Mount` struct at
+  `internal/core/runtime/network.go:16`, `SandboxSpec.Mounts` field at
+  `internal/core/runtime/spec.go:20`, and the translation loop that emits
+  `msbsdk.WithMounts` at `internal/runtime/msb/runtime.go:88`.

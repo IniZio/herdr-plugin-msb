@@ -38,6 +38,9 @@ substrate had.
 - **Trace** — This node traces to charter RISK-6 rather than to a numbered
   acceptance criterion. The charter has no AC for it; it is recorded here so the
   obligation is not invisible.
-- **Anchor** — Target construct: the security page of the shipped documentation,
-  and the documentation gate. Neither exists yet.
+- **Anchor** — Target construct: the security documentation is at
+  `doc/netprofile.md:118` ("Host privilege requirement" section), which states
+  the `/dev/kvm` requirement and the absence of a rootless path. The
+  documentation gate (an automated check for stale rootless/gvisor claims) does
+  not yet exist.
 - **See also** [MSP-R-002](msp-r-002-credential-in-guest-containment.md)

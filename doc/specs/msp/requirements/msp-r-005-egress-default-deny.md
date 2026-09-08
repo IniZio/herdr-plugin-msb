@@ -43,6 +43,8 @@ The plugin **shall** configure that allowlist explicitly at create time and
   The positive control in (b) and the F7 control in (c) are both required: a
   negative-only assertion passes against a sandbox with no networking.
 - **Criticality**: must
-- **Anchor** — Target construct: the egress policy translation that emits
-  microsandbox network rules from the plugin's policy definition. Not yet present.
+- **Anchor** — Target construct: `NetRule` struct at
+  `internal/core/runtime/network.go:10` and `networkConfig` function at
+  `internal/runtime/msb/runtime.go:112` which translates `NetRule` slices into
+  `msbsdk.NetworkConfig` with `DefaultEgress: PolicyActionDeny`.
 - **See also** [MSP-R-002](msp-r-002-credential-in-guest-containment.md)

@@ -43,6 +43,7 @@ number.
   must come from microsandbox's own port-publishing state and the same-port
   contract needs re-examining. Writing the mechanism into this node would produce
   an assertion that outlives whichever mechanism is chosen.
-- **Anchor** — Target construct: the forwarding package that applies
-  `ssh -O forward -L` / `-O cancel` / `-O check`, plus the sandbox-to-herdr
-  binding lookup in the plugin's own store. Not yet present.
+- **Anchor** — Target construct: `internal/core/portfwd/forward.go` —
+  `MasterAlive` (ssh -O check, line 34), `Apply` (ssh -O forward, line 81),
+  `Cancel` (ssh -O cancel, line 98); teardown binding at
+  `internal/core/portfwd/manager.go:62` (`TeardownSandbox`).
