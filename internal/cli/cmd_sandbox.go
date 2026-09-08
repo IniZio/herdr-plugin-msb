@@ -53,7 +53,7 @@ func runCreate(ctx context.Context, args []string, out, errW io.Writer) int {
 	mem := fs.Uint("mem", 0, "memory MiB (0=service default)")
 	vcpus := fs.Uint("vcpus", 0, "vCPU count")
 	cred := fs.Bool("cred", true, "mount Claude credential store")
-	credPath := fs.String("cred-path", "", "credential file path")
+	credPath := fs.String("cred-path", "", "credential directory path")
 	motive := fs.String("motive", "", "motive string")
 	noBoot := fs.Bool("no-boot", false, "create only, skip boot")
 	project := fs.String("project", service.DefaultProject, "project name")

@@ -117,7 +117,7 @@ func TestSpec_CredentialMount(t *testing.T) {
 	}
 
 	svc := New(&fakeRuntime{}, "")
-	expected := credmount.DefaultStorePath()
+	expected := credmount.DefaultStoreDir()
 
 	spec, err := svc.Spec(CreateOptions{Name: "x", ImageRef: "img", Credential: true})
 	if err != nil {
@@ -125,7 +125,7 @@ func TestSpec_CredentialMount(t *testing.T) {
 	}
 	var found bool
 	for _, m := range spec.Mounts {
-		if m.GuestPath == DefaultGuestCredential {
+		if m.GuestPath == DefaultGuestCredDir {
 			found = true
 			if m.ReadOnly {
 				t.Error("credential mount must be read-write")
@@ -136,7 +136,7 @@ func TestSpec_CredentialMount(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Errorf("no credential mount at %s", DefaultGuestCredential)
+		t.Errorf("no credential mount at %s", DefaultGuestCredDir)
 	}
 
 	spec2, err := svc.Spec(CreateOptions{Name: "x", ImageRef: "img", Credential: false})
@@ -144,7 +144,7 @@ func TestSpec_CredentialMount(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, m := range spec2.Mounts {
-		if m.GuestPath == DefaultGuestCredential {
+		if m.GuestPath == DefaultGuestCredDir {
 			t.Errorf("unexpected credential mount when Credential=false")
 		}
 	}

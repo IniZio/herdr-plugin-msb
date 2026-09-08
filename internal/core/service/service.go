@@ -13,6 +13,7 @@ const (
 	DefaultProject         = "herdr"
 	DefaultGuestWorktree   = "/workspace"
 	DefaultGuestCredential = "/root/.claude/.credentials.json"
+	DefaultGuestCredDir    = "/root/.claude"
 	DefaultMemoryMiB       = 1024
 	MaxMemoryMiB           = 2048
 )
@@ -86,15 +87,15 @@ func (s *Service) Spec(opts CreateOptions) (coreruntime.SandboxSpec, error) {
 		spec.Mounts = append(spec.Mounts, m)
 	}
 	if opts.Credential {
-		cp := opts.CredentialPath
-		if cp == "" {
-			cp = credmount.DefaultStorePath()
+		credDir := opts.CredentialPath
+		if credDir == "" {
+			credDir = credmount.DefaultStoreDir()
 		}
 		gc := opts.GuestCredential
 		if gc == "" {
-			gc = DefaultGuestCredential
+			gc = DefaultGuestCredDir
 		}
-		m, err := credmount.FileMount(cp, gc, false)
+		m, err := credmount.DirMount(credDir, gc, false)
 		if err != nil {
 			return coreruntime.SandboxSpec{}, err
 		}

@@ -34,6 +34,11 @@ func DefaultStorePath() string {
 	return filepath.Join(home, ".config", "nexus3", "claude-dedicated", ".credentials.json")
 }
 
+func DefaultStoreDir() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config", "nexus3", "claude-dedicated")
+}
+
 type nestedDoc struct {
 	AccessToken           string   `json:"accessToken"`
 	RefreshToken          string   `json:"refreshToken"`
