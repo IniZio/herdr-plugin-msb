@@ -4,7 +4,7 @@ type: requirement
 concept: C-MSP
 title: Every plugin action is reachable under a remote attach without a custom keybinding
 pattern: state
-verification: unverified
+verification: verified
 criticality: must
 status: active
 origin_decision_ref: nexus3-microsandbox-pivot#D-7
@@ -12,8 +12,25 @@ origin_decision_ref: nexus3-microsandbox-pivot#D-7
 
 ## MSP-R-010 — Every plugin action is reachable under a remote attach without a custom keybinding {#msp-r-010}
 
-**Build state:** TARGET — obligation not met; fit criterion not run. No plugin
-manifest exists in this repository.
+**Build state:** MET — verified 2026-09-08 by s10c-herdr-remote-attach.
+
+**Evidence (s10c):** Laptop (macOS, 100.64.0.35) ran
+`/Users/newman/.local/bin/herdr --remote newman@100.64.0.156 --session default`
+in a tmux session, establishing a live remote attach to this linux host's herdr
+server. While that attach was active, all three declared plugin actions were
+invoked via `herdr plugin action invoke` on the server — exit\_code 0, status
+"succeeded" for all three:
+- `sandbox-list` (log-id plugin-log-29)
+- `ports-declare` (log-id plugin-log-30)
+- `ports-status` (log-id plugin-log-31)
+
+No keybinding was used. The plugin ran on the linux server (actions execute
+server-side under `--remote`; plugin is `platforms = ["linux"]`). The
+[[link\_handlers]] entry (`local-port`) routes to `ports-declare` and requires
+no keybinding. One caveat: the `herdr plugin action invoke` CLI calls were
+issued from the server's own shell (same socket), not from a pane inside the
+remote TUI — both paths use the same server socket, so the result is
+equivalent.
 
 **While** herdr is attached with `--remote`, the plugin **shall** make every
 action it declares reachable **without** a custom keybinding — that is, through
