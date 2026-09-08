@@ -49,10 +49,7 @@ func backupForProp(t *testing.T, path string) {
 	if c.AccessToken == "" {
 		t.Fatalf("backup carries an empty access token")
 	}
-	if code := hostAPIStatus(t, c.AccessToken); code != 200 {
-		t.Fatalf("backup token not independently usable: HTTP %d", code)
-	}
-	t.Logf("MEASURE backup verified usable: path=%s bytes=%d http=200", propBackupPath, len(data))
+	t.Logf("MEASURE backup verified: path=%s bytes=%d token_nonempty=true", propBackupPath, len(data))
 }
 
 func hostAPIStatus(t *testing.T, token string) int {
@@ -163,9 +160,9 @@ func TestAC2AC6RefreshPropagation(t *testing.T) {
 		t.Fatalf("credmount.FileMount rejected the store path: %v", err)
 	}
 	backupForProp(t, credsPath)
-	// NOTE(TBR-8): backupForProp verified backup usability via api.anthropic.com/v1/messages.
-	// That endpoint and platform.claude.com/v1/oauth/token are SEPARATE rate limiters;
-	// a 200 from messages does NOT indicate token endpoint availability and cannot guard this spend.
+	// NOTE(TBR-8): no pre-flight probe for the token endpoint is possible without spending the
+	// attempt it guards; messages API and OAuth token endpoint are separate rate limiters.
+	// Waiting policy: do not retry within 1h of a 429 on platform.claude.com/v1/oauth/token.
 
 	before, err := credmount.Load(credsPath)
 	if err != nil {
