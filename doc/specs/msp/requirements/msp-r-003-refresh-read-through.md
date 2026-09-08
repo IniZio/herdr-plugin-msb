@@ -53,6 +53,7 @@ No component **shall** retain a copy of a token beyond the read that used it.
   stub cannot express.
 - **Criticality**: must
 - **Anchor** — Target construct: the credential read path used by the in-guest
-  agent, and the host-store mount source resolved at sandbox create time. Neither
-  exists yet.
+  agent, and the host-store mount source resolved at sandbox create time. The
+  directory mount ships at `internal/core/service/service.go:98`
+  (`credmount.DirMount`); the in-guest read path is not yet verified.
 - **See also** [MSP-R-001](msp-r-001-credential-live-mount.md)

@@ -38,6 +38,8 @@ UPDATED=$(sed \
   -e 's/"refreshToken"[[:space:]]*:[[:space:]]*"[^"]*"/"refreshToken": "'"${NEW_REFRESH:-$REFRESH_TOKEN}"'"/' \
   %s)
 if [ -z "$UPDATED" ]; then echo "SED_FAILED"; exit 1; fi
-printf '%%s' "$UPDATED" > %s
-echo "REFRESH_OK new_access_digest=$(printf '%%s' "$NEW_ACCESS" | sha256sum | cut -d' ' -f1)"`, credPath, tokenEndpoint, clientID, credPath, credPath)
+TMPF=$(dirname %s)/.creds-tmp-$$.json
+printf '%%s' "$UPDATED" > "$TMPF"
+mv "$TMPF" %s
+echo "REFRESH_OK new_access_digest=$(printf '%%s' "$NEW_ACCESS" | sha256sum | cut -d' ' -f1)"`, credPath, tokenEndpoint, clientID, credPath, credPath, credPath)
 }
