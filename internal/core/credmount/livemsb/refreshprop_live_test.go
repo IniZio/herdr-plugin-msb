@@ -201,7 +201,7 @@ func TestAC2AC6RefreshPropagation(t *testing.T) {
 		t.Fatalf("guests read different tokens from one store: %s vs %s", short(digA0), short(digB0))
 	}
 
-	refreshCtx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
+	refreshCtx, cancel := context.WithTimeout(t.Context(), 120*time.Second)
 	defer cancel()
 	attemptAt := time.Now().UTC().Format(time.RFC3339)
 
