@@ -54,6 +54,16 @@ command = ["herdr-plugin-msb", "new-tab"]
 contexts = ["workspace"]
 platforms = ["linux"]
 
+[[events]]
+on = "worktree.created"
+command = ["sh", "plugins/herdr/bin/on-worktree-created.sh"]
+platforms = ["linux"]
+
+[[events]]
+on = "worktree.removed"
+command = ["sh", "plugins/herdr/bin/on-worktree-removed.sh"]
+platforms = ["linux"]
+
 [[link_handlers]]
 id = "local-port"
 title = "Local Port"
