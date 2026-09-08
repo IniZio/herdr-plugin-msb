@@ -7,6 +7,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/IniZio/herdr-plugin-msb/internal/core/admission"
 	coreruntime "github.com/IniZio/herdr-plugin-msb/internal/core/runtime"
 	msbsdk "github.com/superradcompany/microsandbox/sdk/go"
 )
@@ -19,17 +20,38 @@ func (r *Runtime) Exec(ctx context.Context, ref coreruntime.SandboxRef, req core
 	if err != nil {
 		return coreruntime.ExecResult{}, err
 	}
-	defer func() {
-		dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer cancel()
-		_ = sb.Detach(dctx)
-	}()
+	defer func() { _ = detachWithTimeout(ctx, sb) }()
 	return streamExec(ctx, sb, req)
+}
+
+type detacher interface {
+	Detach(ctx context.Context) error
+}
+
+var detachTimeout = 5 * time.Second
+
+// detachWithTimeout hard-bounds Detach. The SDK's FFI bridge blocks on the
+// Rust call even after a context cancel is triggered, so cancellation alone
+// cannot bound it; the call is abandoned on a goroutine instead.
+func detachWithTimeout(ctx context.Context, d detacher) error {
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), detachTimeout)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- d.Detach(dctx) }()
+	select {
+	case err := <-done:
+		return err
+	case <-dctx.Done():
+		return fmt.Errorf("msb: detach abandoned after %s: %w", detachTimeout, dctx.Err())
+	}
 }
 
 func (r *Runtime) RunEphemeral(ctx context.Context, spec coreruntime.SandboxSpec, req coreruntime.ExecRequest) (coreruntime.ExecResult, error) {
 	if len(req.Argv) == 0 {
 		return coreruntime.ExecResult{}, fmt.Errorf("msb: run-ephemeral: argv must not be empty")
+	}
+	if err := admission.Admit(ctx, r, spec.MemoryMiB); err != nil {
+		return coreruntime.ExecResult{}, err
 	}
 	opts := append(SandboxOptions(spec), msbsdk.WithDetached(), msbsdk.WithEphemeral(true))
 	name := SDKName(spec.Project, spec.Name)
