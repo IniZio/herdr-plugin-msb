@@ -37,14 +37,23 @@ if ! { cp %s "$PROBE_TMP" && mv "$PROBE_TMP" %s; }; then
   echo "PREFLIGHT_RENAME_FAILED"
   exit 1
 fi
-RESP=$(curl -sS --max-time 45 -w '\nHTTP_STATUS=%%{http_code}' -X POST %s \
+RESP_FILE=$(dirname %s)/.creds-resp-$$.json
+set +e
+curl -sS --connect-timeout 10 --max-time 45 -o "$RESP_FILE" \
+  -w '\nHTTP_STATUS=%%{http_code}' -X POST %s \
   -H 'content-type: application/x-www-form-urlencoded' \
   -A 'curl/8.5.0' \
   --data-urlencode 'grant_type=refresh_token' \
   --data-urlencode "refresh_token=$REFRESH_TOKEN" \
-  --data-urlencode 'client_id=%s')
-STATUS=$(printf '%%s' "$RESP" | grep '^HTTP_STATUS=' | cut -d= -f2)
-BODY=$(printf '%%s' "$RESP" | grep -v '^HTTP_STATUS=')
+  --data-urlencode 'client_id=%s' > "$RESP_FILE.status" 2>&1
+CURL_EXIT=$?
+set -e
+BODY=$(cat "$RESP_FILE" 2>/dev/null || true)
+STATUS_LINE=$(cat "$RESP_FILE.status" 2>/dev/null || true)
+echo "RESP_BODY=$BODY"
+STATUS=$(printf '%%s' "$STATUS_LINE" | grep '^HTTP_STATUS=' | cut -d= -f2 || true)
+rm -f "$RESP_FILE" "$RESP_FILE.status" || true
+if [ "$CURL_EXIT" != "0" ]; then echo "CURL_FAILED exit=$CURL_EXIT body=$BODY"; exit "$CURL_EXIT"; fi
 if [ "$STATUS" != "200" ]; then echo "TOKEN_ENDPOINT_FAILED status=$STATUS body=$BODY"; exit 1; fi
 NEW_ACCESS=$(printf '%%s' "$BODY" | sed -n 's/.*"access_token"[^"]*"\([^"]*\)".*/\1/p')
 NEW_REFRESH=$(printf '%%s' "$BODY" | sed -n 's/.*"refresh_token"[^"]*"\([^"]*\)".*/\1/p')
@@ -58,7 +67,7 @@ TMPF=$(dirname %s)/.creds-tmp-$$.json
 printf '%%s' "$UPDATED" > "$TMPF"
 mv "$TMPF" %s
 echo "REFRESH_OK new_access_digest=$(printf '%%s' "$NEW_ACCESS" | sha256sum | cut -d' ' -f1)"`,
-		credPath, credPath, credPath, credPath, tokenEndpoint, clientID, credPath, credPath, credPath)
+		credPath, credPath, credPath, credPath, credPath, tokenEndpoint, clientID, credPath, credPath, credPath)
 }
 
 func TestAC4ProbeAbortsBeforePost(t *testing.T) {

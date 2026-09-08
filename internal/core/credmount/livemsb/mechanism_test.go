@@ -119,3 +119,68 @@ func TestAC2GuestRefreshMechanismNegative(t *testing.T) {
 	}
 	t.Logf("MEASURE AC2 mechanism negative: confirmed REFRESH_OK absent on 400")
 }
+
+func TestAC3PartialBodySalvage(t *testing.T) {
+	if _, err := exec.LookPath("curl"); err != nil {
+		t.Skip("curl not in PATH")
+	}
+
+	partial := `{"access_token":"partial-new-tok`
+
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			t.Error("hijack not supported")
+			return
+		}
+		conn, buf, err := hj.Hijack()
+		if err != nil {
+			t.Errorf("hijack: %v", err)
+			return
+		}
+		defer conn.Close()
+		_, _ = buf.WriteString("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 999\r\n\r\n" + partial)
+		_ = buf.Flush()
+	}))
+	defer stub.Close()
+
+	dir := t.TempDir()
+
+	cred1 := filepath.Join(dir, "creds1.json")
+	if err := os.WriteFile(cred1, []byte(syntheticNestedCreds("tok-ac3a", "ref-ac3a")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	oldScript := fmt.Sprintf(`set -eu
+REFRESH_TOKEN=$(sed -n 's/.*"refreshToken"[^"]*"\([^"]*\)".*/\1/p' %s)
+if [ -z "$REFRESH_TOKEN" ]; then echo "REFRESH_TOKEN_EMPTY"; exit 1; fi
+PROBE_TMP=$(dirname %s)/.creds-probe-$$.tmp
+if ! { cp %s "$PROBE_TMP" && mv "$PROBE_TMP" %s; }; then rm -f "$PROBE_TMP" || true; echo "PREFLIGHT_RENAME_FAILED"; exit 1; fi
+RESP=$(curl -sS --max-time 45 -w '\nHTTP_STATUS=%%{http_code}' -X POST %s \
+  -H 'content-type: application/x-www-form-urlencoded' -A 'curl/8.5.0' \
+  --data-urlencode 'grant_type=refresh_token' \
+  --data-urlencode "refresh_token=$REFRESH_TOKEN" \
+  --data-urlencode 'client_id=ac3-client')
+echo "REACHED body=$RESP"`,
+		cred1, cred1, cred1, cred1, stub.URL)
+
+	beforeOut, _ := exec.Command("/bin/sh", "-c", oldScript).CombinedOutput()
+	t.Logf("AC3 BEFORE (body lost):\n%s", strings.TrimSpace(string(beforeOut)))
+	if strings.Contains(string(beforeOut), "partial") {
+		t.Fatalf("AC3 BEFORE: partial bytes visible — defect not reproduced; test is vacuous")
+	}
+	if strings.Contains(string(beforeOut), "REACHED") {
+		t.Fatalf("AC3 BEFORE: REACHED printed — set -e did not abort; test is vacuous")
+	}
+
+	cred2 := filepath.Join(dir, "creds2.json")
+	if err := os.WriteFile(cred2, []byte(syntheticNestedCreds("tok-ac3b", "ref-ac3b")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	afterOut, _ := exec.Command("/bin/sh", "-c", guestRefreshScript(stub.URL, "ac3-client", cred2)).CombinedOutput()
+	t.Logf("AC3 AFTER (body salvaged):\n%s", strings.TrimSpace(string(afterOut)))
+	if !strings.Contains(string(afterOut), "partial") {
+		t.Fatalf("AC3 AFTER: partial bytes absent — salvage did not work; got: %q", string(afterOut))
+	}
+	t.Logf("MEASURE AC3: before_body_lost=true after_body_salvaged=true")
+}
