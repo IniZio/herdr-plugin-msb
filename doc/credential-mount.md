@@ -29,26 +29,26 @@ implementation resolves it through the SDK as:
 Host-side logic lives in `internal/core/credmount/`. The guest reads the host
 file directly; no value is copied into a sandbox secret store.
 
-## Why not native microsandbox secrets — findings F3 and F4
+## Why not native microsandbox secrets
 
 Two earlier designs were discarded on the basis of measured failures, not
 speculation.
 
-**F3 — rotation reaches only new connections.** After `msb modify --secret`,
+**Secret rotation reaches only new connections.** After `msb modify --secret`,
 a keep-alive TLS connection to the microsandbox API continued serving the old
 secret value. Twenty-six requests over roughly 52 seconds after rotation all
 carried the stale value. There is no knob that forces teardown of an
 established connection at rotation time.
 
-**F4 — an Anthropic OAuth refresh immediately revokes the prior token.**
+**An OAuth refresh immediately revokes the prior access token.**
 The old access token returned HTTP 401 with `"OAuth access token has been
 revoked"` approximately 85 seconds after the refresh grant, while it still
 carried 3 hours 32 minutes of nominal validity. The error field is `revoked`,
 not `expired`. Observed overlap between old and new token: zero.
 
-The interaction is what makes the combination fatal: F3 opens a staleness
-window of at least tens of seconds, and F4 makes anything inside that window
-a hard 401 with no retry path. A connection that was valid at the last
+The interaction is what makes the combination fatal: the staleness window spans
+at least tens of seconds, and immediate revocation makes anything inside that
+window a hard 401 with no retry path. A connection that was valid at the last
 keepalive can be dead before the next request, invisibly, with no signal
 until the API call fails.
 
@@ -59,30 +59,31 @@ Native microsandbox secrets were rejected on those two measurements together.
 A per-request token-swapping CONNECT proxy was built and measured working:
 inbound Bearer was a 64-character hex placeholder, outbound was the real
 108-character token, and the real Anthropic API returned HTTP 200. The proxy
-is immune to F3 (it fetches the current token per request, never caching
-across connections) and immune to F4 (it reads whatever is current at call
-time). It exists as prior art in this codebase.
+is immune to the staleness window (it fetches the current token per request,
+never caching across connections) and to immediate revocation (it reads
+whatever is current at call time). It exists as prior art in this codebase.
 
 The operator chose the mount instead. The reason was simplicity, not a
 failure of the proxy. The proxy remains available if the mount's tradeoff
 proves unacceptable.
 
-## Why the mount is believed immune to F3 and F4 — a tested bet
+## Why the mount is believed immune to both failure modes — a tested bet
 
-The mount survives F3 because there is no secret store and no connection
-whose cached value can go stale: the guest reads the host file on every
-access. A refresh written on the host is visible inside the guest as soon as
-the guest opens the file again, leaving no staleness window.
+The mount has no staleness window because there is no secret store and no
+connection whose cached value can go stale: the guest reads the host file on
+every access. A refresh written on the host is visible inside the guest as
+soon as the guest opens the file again.
 
-It survives F4 for the same reason: the prior token is not held anywhere
-inside the sandbox after the host writes a new one. There is nothing to
-revoke.
+It survives immediate revocation for the same reason: the prior token is not
+held anywhere inside the sandbox after the host writes a new one. There is
+nothing to revoke.
 
 This is a bet, not a fact. The failure mode that would invalidate it: if any
 layer inside the guest caches the token in memory rather than re-reading the
-file, the design fails at the first refresh — precisely the shape that F3 and
-F4 already used to kill two prior designs. Both F3 and F4 were found by
-measurement, not anticipated by analysis. This bet sits under the same
+file, the design fails at the first refresh — precisely the shape that
+rotation-staleness and immediate revocation already used to kill two prior
+designs. Both failure modes were found by measurement, not anticipated by
+analysis. This bet sits under the same
 suspicion, and the place where it is actually checked is the test suite, not
 this document. See `internal/core/credmount/` and the live harness under
 `internal/core/credmount/livemsb/`.
@@ -200,7 +201,7 @@ a save cannot drop fields the loader does not model.
 `io.ReadAll(io.LimitReader(resp.Body, 512))`. The real response exceeds 512
 bytes, so `json.Unmarshal` failed and the rotated token pair was discarded
 without being written. Because an Anthropic refresh immediately revokes the
-prior token with zero overlap (F4), this left the store holding a dead pair
+prior token with zero overlap, this left the store holding a dead pair
 with no recovery path other than a fresh login.
 
 **Standing rules.** Never cap a token-endpoint response body. Persist the raw
@@ -269,7 +270,7 @@ verified byte-identical afterwards each time — `RefreshFile` returns before an
 write on a non-2xx (`internal/core/credmount/refresh.go`), so a rate-limited
 refresh leaves the credential file untouched. That is now measured, not assumed.
 
-What stays open is only the OAuth half of F4: whether the guest's next call
+What stays open is only the revocation half: whether the guest's next call
 after a real refresh returns 200 or the revocation 401. The mount half is
 settled by the propagation measurement above — new host bytes do reach the
 guest under both write modes, so a stale read is not the mechanism that would
@@ -311,7 +312,7 @@ mounted `ro`, and the refresh-propagation coupling that choice creates.
 `TestConcurrentMountContention` boots two 1024 MiB guests on the same
 single-file mount and then refreshes on the host before letting either guest
 call the API. It **SKIPPED both times** — the refresh never succeeded, so the
-revocation half of F4 was never exercised. **AC6 is BLOCKED, not met.** No
+revocation was never exercised. **AC6 is BLOCKED, not met.** No
 green result may be read out of this run: the sandbox pair was created and both
 guests read the same mount, but a contention finding without a completed
 refresh is vacuous.
@@ -339,7 +340,7 @@ rotated away.
 Both halves of that are now measured, not inferred. A guest call with the
 stored access token returned **HTTP 401** with
 `{"type":"authentication_error","message":"OAuth access token has been
-revoked."}` — the `revoked` shape of F4, arrived at without any second party,
+revoked."}` — the `revoked` shape of OAuth revocation, arrived at without any second party,
 30 minutes inside the token's nominal validity (`expires_at`
 `2026-09-07T19:52:36Z`). Attempt 6 then proved the refresh token had been
 rotated too: `invalid_grant`.
@@ -412,7 +413,7 @@ concurrent sandboxes mount the same store; both are proven to reach HTTP 200
 with identical token digests (`dec964bb5553`); then one host-side refresh is
 performed and both guests call again. The refreshing side answers AC2 and the
 bystander answers AC6. This settles both ACs off a single rotation, because
-with no broker, whichever side refreshes revokes the other's token (F4), and
+with no broker, whichever side refreshes revokes the other's token (OAuth revocation is immediate), and
 refresh attempts are too rate-limited to spend one per AC. AC6 cannot be closed
 until a refresh returns 2xx.
 
