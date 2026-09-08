@@ -41,12 +41,26 @@ func TestLiveMountRoundTrip(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(roDir, "ro.txt"), []byte("readonly\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	noexecDir := t.TempDir()
+	nosuidDir := t.TempDir()
+	nodevDir := t.TempDir()
+
+	script := []byte("#!/bin/sh\necho noexec-ran\n")
+	if err := os.WriteFile(filepath.Join(noexecDir, "probe.sh"), script, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rwDir, "probe.sh"), script, 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	r := New()
 	spec := LiveSpec("mount")
 	spec.Mounts = []coreruntime.Mount{
 		{HostPath: rwDir, GuestPath: "/work", ReadOnly: false},
 		{HostPath: roDir, GuestPath: "/ro", ReadOnly: true},
+		{HostPath: noexecDir, GuestPath: "/noexec", ReadOnly: false, Noexec: true},
+		{HostPath: nosuidDir, GuestPath: "/nosuid", ReadOnly: false, Nosuid: true},
+		{HostPath: nodevDir, GuestPath: "/nodev", ReadOnly: false, Nodev: true},
 	}
 
 	ref, err := r.CreateAndBoot(ctx, spec)
@@ -66,6 +80,7 @@ func TestLiveMountRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("guest write exec: %v", err)
 	}
+	t.Logf("AC1 RW write: exit=%d stderr=%q", guestWrite.ExitCode(), guestWrite.Stderr())
 	if guestWrite.ExitCode() != 0 {
 		t.Fatalf("guest write exit %d stderr: %s", guestWrite.ExitCode(), guestWrite.Stderr())
 	}
@@ -74,6 +89,7 @@ func TestLiveMountRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("host read guest.txt: %v", err)
 	}
+	t.Logf("AC1 RW host-side guest.txt bytes: %q", gotNew)
 	if strings.TrimSpace(string(gotNew)) != "guest-new" {
 		t.Fatalf("guest.txt on host = %q, want \"guest-new\"", gotNew)
 	}
@@ -116,14 +132,50 @@ func TestLiveMountRoundTrip(t *testing.T) {
 		t.Fatalf("guest did not see host-b.txt: %q", combined)
 	}
 
-	roWrite, err := sb.Exec(ctx, "sh", []string{"-c", "echo fail > /ro/ro.txt"})
+	roWrite, err := sb.Exec(ctx, "sh", []string{"-c", "echo fail > /ro/ro.txt 2>&1; echo fail > /ro/ro.txt"})
 	if err != nil {
 		t.Fatalf("ro write exec: %v", err)
 	}
+	t.Logf("AC1 RO write: exit=%d stderr=%q", roWrite.ExitCode(), roWrite.Stderr())
 	if roWrite.ExitCode() == 0 {
 		t.Fatal("write to read-only mount succeeded; expected non-zero exit")
 	}
 	if roWrite.Stderr() == "" {
 		t.Fatal("write to read-only mount produced no stderr")
+	}
+
+	roBytes, err := os.ReadFile(filepath.Join(roDir, "ro.txt"))
+	if err != nil {
+		t.Fatalf("host read ro.txt after failed write: %v", err)
+	}
+	t.Logf("AC1 RO host-side ro.txt bytes after failed write: %q (must equal \"readonly\\n\")", roBytes)
+	if string(roBytes) != "readonly\n" {
+		t.Fatalf("ro.txt on host changed after failed write: %q", roBytes)
+	}
+
+	procMounts, err := sb.Exec(ctx, "sh", []string{"-c",
+		"grep -E ' /ro | /work | /noexec | /nosuid | /nodev ' /proc/mounts"})
+	if err != nil {
+		t.Fatalf("proc/mounts exec: %v", err)
+	}
+	t.Logf("AC2 /proc/mounts relevant lines:\n%s", procMounts.Stdout())
+
+	noexecExec, err := sb.Exec(ctx, "sh", []string{"-c", "/noexec/probe.sh"})
+	if err != nil {
+		t.Fatalf("noexec exec attempt: %v", err)
+	}
+	t.Logf("AC2 noexec execute attempt: exit=%d stderr=%q stdout=%q", noexecExec.ExitCode(), noexecExec.Stderr(), noexecExec.Stdout())
+
+	rwExec, err := sb.Exec(ctx, "sh", []string{"-c", "/work/probe.sh"})
+	if err != nil {
+		t.Fatalf("rw exec attempt: %v", err)
+	}
+	t.Logf("AC2 rw (no noexec) execute: exit=%d stdout=%q", rwExec.ExitCode(), rwExec.Stdout())
+
+	if noexecExec.ExitCode() == 0 {
+		t.Error("AC2 noexec: script executed successfully on noexec mount; expected failure")
+	}
+	if rwExec.ExitCode() != 0 {
+		t.Errorf("AC2 noexec control: script failed on rw mount (exit %d); probe is invalid", rwExec.ExitCode())
 	}
 }

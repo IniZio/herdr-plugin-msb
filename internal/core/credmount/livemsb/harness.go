@@ -18,6 +18,30 @@ type BindMount struct {
 	HostPath  string
 	GuestPath string
 	ReadOnly  bool
+	Noexec    bool
+	Nosuid    bool
+	Nodev     bool
+}
+
+func mountArg(m BindMount) string {
+	var opts []string
+	if m.ReadOnly {
+		opts = append(opts, "ro")
+	}
+	if m.Noexec {
+		opts = append(opts, "noexec")
+	}
+	if m.Nosuid {
+		opts = append(opts, "nosuid")
+	}
+	if m.Nodev {
+		opts = append(opts, "nodev")
+	}
+	base := m.HostPath + ":" + m.GuestPath
+	if len(opts) == 0 {
+		return base
+	}
+	return base + ":" + strings.Join(opts, ",")
 }
 
 type SandboxOpts struct {
@@ -54,10 +78,10 @@ func Create(ctx context.Context, o SandboxOpts) (*Sandbox, error) {
 		args = append(args, "-c", strconv.Itoa(o.VCPUs))
 	}
 	for _, m := range o.FileMounts {
-		args = append(args, "--mount-file", m.HostPath+":"+m.GuestPath)
+		args = append(args, "--mount-file", mountArg(m))
 	}
 	for _, m := range o.DirMounts {
-		args = append(args, "--mount-dir", m.HostPath+":"+m.GuestPath)
+		args = append(args, "--mount-dir", mountArg(m))
 	}
 	for k, v := range o.Env {
 		args = append(args, "-e", k+"="+v)

@@ -90,6 +90,9 @@ func SandboxOptions(spec coreruntime.SandboxSpec) []msbsdk.SandboxOption {
 		for _, m := range spec.Mounts {
 			mounts[m.GuestPath] = msbsdk.Mount.Bind(m.HostPath, msbsdk.MountOptions{
 				Readonly:           m.ReadOnly,
+				Noexec:             m.Noexec,
+				Nosuid:             m.Nosuid,
+				Nodev:              m.Nodev,
 				StatVirtualization: msbsdk.StatVirtualizationRelaxed,
 				HostPermissions:    msbsdk.HostPermissionsMirror,
 			})

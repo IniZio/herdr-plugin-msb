@@ -17,4 +17,7 @@ type Mount struct {
 	HostPath  string
 	GuestPath string
 	ReadOnly  bool
+	Noexec    bool
+	Nosuid    bool
+	Nodev     bool
 }

@@ -208,12 +208,19 @@ wrote in place through the mount rather than replacing the file. The test
 restored the working copy from the store afterwards; the real store was never
 the mount target in this test.
 
-The read-only alternative is not expressible: `msb create --help` exposes no
-`ro`, `:ro`, or `readonly` option for `--mount-file` or `--mount-dir`, and the
-harness silently ignores `BindMount.ReadOnly`. A guest-side refresh writer is
-therefore possible, and a guest that writes the file also has the power to
-corrupt the operator's credential store. That widens the blast radius recorded
-above from read to read-write.
+A guest-side refresh writer is therefore possible, and a guest that writes the
+file also has the power to corrupt the operator's credential store. That widens
+the blast radius recorded above from read to read-write.
+
+**Correction (s18).** This paragraph previously claimed the read-only
+alternative was "not expressible", inferred from `msb create --help` not listing
+an `ro` option. That inference was wrong — the help text says OPTIONS "may
+include" `quota=` and `uid=/gid=`, which is non-exhaustive. Read-only mounts are
+supported by the CLI, the Go SDK and the Rust runtime; what was missing was our
+own plumbing, and the harness's silent drop of `BindMount.ReadOnly` was a defect
+rather than a backend limitation. See `doc/readonly-mounts.md`, which carries
+the evidence, the recommendation on whether the credential store should ship
+mounted `ro`, and the refresh-propagation coupling that choice creates.
 
 ## s16-AC6 — BLOCKED, and the credential store was destroyed measuring it
 
