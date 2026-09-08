@@ -6,7 +6,10 @@ import (
 	"os"
 	"syscall"
 	"testing"
+	"time"
 	"unsafe"
+
+	coreruntime "github.com/IniZio/herdr-plugin-msb/internal/core/runtime"
 )
 
 func openPTY(t *testing.T, rows, cols uint16) (master, slave *os.File) {
@@ -141,6 +144,39 @@ func TestPtySizeExplicitFlagsWin(t *testing.T) {
 
 	if got := ptySize(30, 100); got.Rows != 30 || got.Cols != 100 {
 		t.Fatalf("ptySize(30,100) = %dx%d, want 30x100", got.Rows, got.Cols)
+	}
+}
+
+func TestEnterRawModeDeliversSIGWINCH(t *testing.T) {
+	_, slave := openPTY(t, 62, 242)
+	ch, cleanup, ok := enterRawMode(int(slave.Fd()))
+	if !ok {
+		t.Skip("enterRawMode: not a terminal")
+	}
+	defer cleanup()
+
+	if err := syscall.Kill(syscall.Getpid(), syscall.SIGWINCH); err != nil {
+		t.Fatalf("Kill(SIGWINCH): %v", err)
+	}
+	select {
+	case ws, open := <-ch:
+		if !open {
+			t.Fatal("resizeCh closed before delivering WinSize")
+		}
+		if ws.Rows != 62 || ws.Cols != 242 {
+			t.Fatalf("got %dx%d, want 62x242", ws.Rows, ws.Cols)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no WinSize on resizeCh after SIGWINCH")
+	}
+}
+
+func TestExecReqWiresResizeCh(t *testing.T) {
+	ch := make(chan coreruntime.WinSize)
+	var req coreruntime.ExecRequest
+	applyPTYFields(&req, ch, true, 0, 0)
+	if req.ResizeCh == nil {
+		t.Fatal("req.ResizeCh is nil: ResizeCh wire is cut")
 	}
 }
 

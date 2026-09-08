@@ -148,6 +148,16 @@ func ptySize(rows, cols uint16) coreruntime.WinSize {
 	return coreruntime.WinSize{Rows: rows, Cols: cols}
 }
 
+func applyPTYFields(req *coreruntime.ExecRequest, resizeCh <-chan coreruntime.WinSize, raw bool, rows, cols uint16) {
+	req.TTY = true
+	req.StdinReader = os.Stdin
+	if raw {
+		req.ResizeCh = resizeCh
+	}
+	ws := ptySize(rows, cols)
+	req.Rows, req.Cols = ws.Rows, ws.Cols
+}
+
 func runExec(ctx context.Context, args []string, out, errW io.Writer) int {
 	fs := flag.NewFlagSet("exec", flag.ContinueOnError)
 	fs.SetOutput(errW)
@@ -193,15 +203,9 @@ func runExec(ctx context.Context, args []string, out, errW io.Writer) int {
 		Stderr: errW,
 	}
 	if *pty {
-		req.TTY = true
-		req.StdinReader = os.Stdin
 		resizeCh, cleanup, raw := enterRawMode(int(os.Stdin.Fd()))
 		defer cleanup()
-		if raw {
-			req.ResizeCh = resizeCh
-		}
-		ws := ptySize(uint16(*rows), uint16(*cols))
-		req.Rows, req.Cols = ws.Rows, ws.Cols
+		applyPTYFields(&req, resizeCh, raw, uint16(*rows), uint16(*cols))
 	}
 	res, err := svc.Exec(ctx, name, req)
 	if err != nil {
