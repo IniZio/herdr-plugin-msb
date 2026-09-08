@@ -66,10 +66,7 @@ func Available() error {
 	return nil
 }
 
-func Create(ctx context.Context, o SandboxOpts) (*Sandbox, error) {
-	if os.Getenv("HERDR_MSB_LIVE") != "1" {
-		return nil, fmt.Errorf("HERDR_MSB_LIVE not set")
-	}
+func buildArgs(o SandboxOpts) []string {
 	args := []string{"create", "--replace", "-q", "-n", o.Name}
 	if o.MemoryMiB > 0 {
 		args = append(args, "-m", strconv.Itoa(o.MemoryMiB)+"M")
@@ -89,6 +86,14 @@ func Create(ctx context.Context, o SandboxOpts) (*Sandbox, error) {
 	if o.Image != "" {
 		args = append(args, o.Image)
 	}
+	return args
+}
+
+func Create(ctx context.Context, o SandboxOpts) (*Sandbox, error) {
+	if os.Getenv("HERDR_MSB_LIVE") != "1" {
+		return nil, fmt.Errorf("HERDR_MSB_LIVE not set")
+	}
+	args := buildArgs(o)
 	cmd := exec.CommandContext(ctx, msbBin, args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("msb create: %w\n%s", err, out)

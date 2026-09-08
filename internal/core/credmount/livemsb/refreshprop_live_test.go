@@ -163,7 +163,8 @@ func TestAC2AC6RefreshPropagation(t *testing.T) {
 	requireRefreshBudget(t)
 
 	credsPath := credmount.DefaultStorePath()
-	if _, err := credmount.DirMount(credmount.DefaultStoreDir(), guestCredDir, false); err != nil {
+	rm, err := credmount.DirMount(credmount.DefaultStoreDir(), guestCredDir, false)
+	if err != nil {
 		t.Fatalf("credmount.DirMount rejected the store dir: %v", err)
 	}
 	backupForProp(t, credsPath)
@@ -180,12 +181,12 @@ func TestAC2AC6RefreshPropagation(t *testing.T) {
 		t.Fatalf("live store carries an empty access token")
 	}
 
-	mounts := []livemsb.BindMount{{HostPath: credmount.DefaultStoreDir(), GuestPath: guestCredDir}}
+	mounts := []livemsb.BindMount{{HostPath: rm.HostPath, GuestPath: rm.GuestPath, ReadOnly: rm.ReadOnly}}
 	sbA := livemsb.RequireSandbox(t, livemsb.SandboxOpts{
-		Name: "s16-ac2-refresher", Image: "alpine", MemoryMiB: guestMemMiB, VCPUs: 1, FileMounts: mounts,
+		Name: "s16-ac2-refresher", Image: "alpine", MemoryMiB: guestMemMiB, VCPUs: 1, DirMounts: mounts,
 	})
 	sbB := livemsb.RequireSandbox(t, livemsb.SandboxOpts{
-		Name: "s16-ac6-bystander", Image: "alpine", MemoryMiB: guestMemMiB, VCPUs: 1, FileMounts: mounts,
+		Name: "s16-ac6-bystander", Image: "alpine", MemoryMiB: guestMemMiB, VCPUs: 1, DirMounts: mounts,
 	})
 
 	provisionCurl(t, sbA, "sandbox A")

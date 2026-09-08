@@ -98,6 +98,10 @@ func TestAC3GFileMountRefreshScript(t *testing.T) {
 	if err == nil && code == 0 && strings.Contains(out, "REFRESH_OK") {
 		t.Fatalf("AC3G file: UNEXPECTEDLY succeeded — rename did not fail EBUSY")
 	}
+	combined := strings.ToLower(out + " " + errOut)
+	if !strings.Contains(combined, "busy") {
+		t.Fatalf("AC3G file: expected EBUSY on file-mount rename, got exit=%d out=%q stderr=%q", code, out, errOut)
+	}
 
 	hostBytes, err := os.ReadFile(credFile)
 	if err != nil {
