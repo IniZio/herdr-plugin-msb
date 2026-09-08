@@ -9,7 +9,7 @@ inside serving token on port 45455.
 |---|---|
 | Sandbox name | `herdr--eyeball` (msb name), project `herdr`, id local:203 |
 | Guest dev-server token | `eyeball-1788867133-22958` |
-| Dev server port | 45455 (guest→host forward via libkrun, listener pid 600544) |
+| Dev server port | 45455 (guest→host forward via libkrun; durable server: `nc -lk -p 45455 -e /tmp/handler-cat.sh`, guest PID 762) |
 | SSH forward | laptop 100.64.0.35 → engine-03 100.64.0.156 port 45455, master PID 92315 on laptop, socket `/tmp/herdr-agent-engine-03.ctl` |
 | Plugin binary | `~/.local/bin/herdr-plugin-msb` (current, has -pty) |
 | herdr workspace for worktree | w8D "herdr-plugin-msb demo" |
@@ -73,36 +73,31 @@ Then in the new pane run `herdr-plugin-msb exec -pty -project herdr eyeball -- /
 
 ## 4. Test the port forward from the laptop
 
-On the **laptop** (100.64.0.35):
+The **only** valid test of the SSH port forward is a fetch run **on the laptop**.
+An engine-side `curl http://127.0.0.1:45455/` reaches the guest's published port directly
+(via libkrun) and never crosses the tunnel — a passing engine-side fetch says nothing
+about whether the laptop forward is alive.
+
+From **engine-03**, ssh to the laptop and run curl there:
+
+```sh
+ssh 100.64.0.35 'sh -c "curl -sS --max-time 5 http://127.0.0.1:45455/"'
+```
+
+Expected output: `eyeball-1788867133-22958`  
+Expected exit code: **0**
+
+The durable server (`nc -lk -p 45455 -e /tmp/handler-cat.sh`) sends a proper
+`HTTP/1.0 200 OK` response with `Content-Length: 25` and closes the connection cleanly.
+curl exits 0 and prints the token with no timeout.
+
+Engine-side fetch (tests only the published guest port, **not** the tunnel):
 
 ```sh
 curl -sS http://127.0.0.1:45455/
 ```
 
-The dev server speaks HTTP/1.0 without `Content-Length`, so curl will hang after the body.
-Use `--max-time 3` and accept exit code 28 — the token still appears in the output:
-
-```sh
-curl --max-time 3 http://127.0.0.1:45455/ ; echo
-```
-
-Expected output: `eyeball-1788867133-22958`
-
-Alternatively, from the laptop SSH tunnel command as originally documented:
-
-```sh
-ssh 100.64.0.35 'sh -c "curl --max-time 3 http://127.0.0.1:45455/"'
-```
-
-Expected: `eyeball-1788867133-22958` (exit code 28 is normal due to HTTP/1.0 hang).
-
-From **engine-03** directly (bypassing the laptop hop):
-
-```sh
-curl --max-time 3 http://127.0.0.1:45455/
-```
-
-Same expected output and exit behaviour.
+Expected output: `eyeball-1788867133-22958`, exit 0.
 
 ## 5. Verify plugin verbs (run from engine-03)
 
