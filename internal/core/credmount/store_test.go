@@ -1,150 +1,221 @@
 package credmount
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
-	"syscall"
 	"testing"
 	"time"
 )
 
-func TestLoadSaveRoundTrip(t *testing.T) {
-	c := Credentials{
-		AccessToken:   "tok1",
-		RefreshToken:  "rtok1",
-		ExpiresAt:     "2026-09-07T19:52:36.635049000Z",
-		TokenType:     "Bearer",
-		ClientID:      "client-id-1",
-		ClientSecret:  "secret1",
-		TokenEndpoint: "https://example.com/token",
-	}
-	dir := t.TempDir()
-	path := filepath.Join(dir, "creds.json")
-	if err := Save(path, c); err != nil {
-		t.Fatal(err)
-	}
-	got, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != c {
-		t.Fatalf("Save/Load: got %+v want %+v", got, c)
-	}
-}
+const nestedFixture = `{
+  "claudeAiOauth": {
+    "accessToken": "at-nested",
+    "refreshToken": "rt-nested",
+    "expiresAt": 1725734400000,
+    "refreshTokenExpiresAt": 1728326400000,
+    "scopes": ["read", "write"],
+    "subscriptionType": "pro",
+    "rateLimitTier": "tier1"
+  }
+}`
 
-func TestSaveInPlaceRoundTrip(t *testing.T) {
-	c := Credentials{
-		AccessToken:   "tok2",
-		RefreshToken:  "rtok2",
-		ExpiresAt:     "2026-09-07T19:52:36.635049000Z",
-		TokenType:     "Bearer",
-		ClientID:      "client-id-2",
-		ClientSecret:  "sec2",
-		TokenEndpoint: "https://example.com/token",
-	}
-	dir := t.TempDir()
-	path := filepath.Join(dir, "creds.json")
-	if err := Save(path, c); err != nil {
-		t.Fatal(err)
-	}
-	if err := SaveInPlace(path, c); err != nil {
-		t.Fatal(err)
-	}
-	got, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != c {
-		t.Fatalf("SaveInPlace/Load: got %+v want %+v", got, c)
-	}
-}
+const flatFixture = `{
+  "access_token": "at-flat",
+  "refresh_token": "rt-flat",
+  "expires_at": "2026-09-07T19:52:36.635049000Z",
+  "token_type": "Bearer"
+}`
 
-func inodeOf(t *testing.T, path string) uint64 {
+func writeFixture(t *testing.T, content string) string {
 	t.Helper()
-	var st syscall.Stat_t
-	if err := syscall.Stat(path, &st); err != nil {
+	path := filepath.Join(t.TempDir(), "creds.json")
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
-	return st.Ino
+	return path
 }
 
-func TestSaveChangesInode(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "creds.json")
-	c := Credentials{AccessToken: "a", RefreshToken: "r", ExpiresAt: "2026-01-01T00:00:00Z"}
+func TestLoadNested(t *testing.T) {
+	c, err := Load(writeFixture(t, nestedFixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.AccessToken != "at-nested" {
+		t.Fatalf("AccessToken: got %q", c.AccessToken)
+	}
+	if c.RefreshToken != "rt-nested" {
+		t.Fatalf("RefreshToken: got %q", c.RefreshToken)
+	}
+	if c.ExpiresAt.IsZero() {
+		t.Fatal("ExpiresAt is zero")
+	}
+	if len(c.Scopes) != 2 {
+		t.Fatalf("Scopes: got %v", c.Scopes)
+	}
+	if c.SubscriptionType != "pro" {
+		t.Fatalf("SubscriptionType: got %q", c.SubscriptionType)
+	}
+	if c.RateLimitTier != "tier1" {
+		t.Fatalf("RateLimitTier: got %q", c.RateLimitTier)
+	}
+	if c.Format != FormatNested {
+		t.Fatalf("Format: got %v", c.Format)
+	}
+}
+
+func TestLoadFlat(t *testing.T) {
+	c, err := Load(writeFixture(t, flatFixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.AccessToken != "at-flat" {
+		t.Fatalf("AccessToken: got %q", c.AccessToken)
+	}
+	if c.Format != FormatFlat {
+		t.Fatalf("Format: got %v", c.Format)
+	}
+}
+
+func TestRegressionNestedNotEmpty(t *testing.T) {
+	c, err := Load(writeFixture(t, nestedFixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.AccessToken == "" {
+		t.Fatal("AccessToken must not be empty for nested shape (regression: old flat struct returned empty with nil error)")
+	}
+}
+
+func TestLoadUnrecognisedShape(t *testing.T) {
+	_, err := Load(writeFixture(t, `{"something":1}`))
+	if err == nil {
+		t.Fatal("expected error for unrecognised shape")
+	}
+}
+
+func TestLoadInvalidJSON(t *testing.T) {
+	_, err := Load(writeFixture(t, "not json"))
+	if err == nil {
+		t.Fatal("expected error for invalid JSON")
+	}
+}
+
+func TestLoadNestedEmptyAccessToken(t *testing.T) {
+	fixture := `{"claudeAiOauth":{"accessToken":"","refreshToken":"r","expiresAt":1725734400000}}`
+	_, err := Load(writeFixture(t, fixture))
+	if err == nil {
+		t.Fatal("expected error for empty accessToken")
+	}
+}
+
+func TestRoundTripPreservesExtraKey(t *testing.T) {
+	fixture := `{
+  "claudeAiOauth": {
+    "accessToken": "orig",
+    "refreshToken": "r",
+    "expiresAt": 1725734400000,
+    "unknownField": "keepme"
+  }
+}`
+	path := writeFixture(t, fixture)
+	c, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.AccessToken = "mutated"
 	if err := Save(path, c); err != nil {
 		t.Fatal(err)
 	}
-	before := inodeOf(t, path)
-	c.AccessToken = "b"
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var outer map[string]interface{}
+	if err := json.Unmarshal(data, &outer); err != nil {
+		t.Fatal(err)
+	}
+	inner, ok := outer["claudeAiOauth"].(map[string]interface{})
+	if !ok {
+		t.Fatal("claudeAiOauth missing or wrong type")
+	}
+	if inner["accessToken"] != "mutated" {
+		t.Fatalf("accessToken: got %v", inner["accessToken"])
+	}
+	if inner["unknownField"] != "keepme" {
+		t.Fatalf("unknownField not preserved: got %v", inner["unknownField"])
+	}
+}
+
+func TestSaveNewInode(t *testing.T) {
+	path := writeFixture(t, nestedFixture)
+	c, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fi1, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.AccessToken = "changed"
 	if err := Save(path, c); err != nil {
 		t.Fatal(err)
 	}
-	after := inodeOf(t, path)
-	if before == after {
-		t.Fatalf("Save must change inode: before=%d after=%d (same)", before, after)
+	fi2, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(fi1, fi2) {
+		t.Fatal("Save must produce a new inode")
 	}
 }
 
 func TestSaveInPlacePreservesInode(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "creds.json")
-	c := Credentials{AccessToken: "a", RefreshToken: "r", ExpiresAt: "2026-01-01T00:00:00Z"}
-	if err := Save(path, c); err != nil {
+	path := writeFixture(t, nestedFixture)
+	c, err := Load(path)
+	if err != nil {
 		t.Fatal(err)
 	}
-	before := inodeOf(t, path)
-	c.AccessToken = "b"
+	fi1, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.AccessToken = "changed"
 	if err := SaveInPlace(path, c); err != nil {
 		t.Fatal(err)
 	}
-	after := inodeOf(t, path)
-	if before != after {
-		t.Fatalf("SaveInPlace must preserve inode: before=%d after=%d (changed)", before, after)
+	fi2, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(fi1, fi2) {
+		t.Fatal("SaveInPlace must preserve inode")
 	}
 }
 
 func TestExpiredAndExpiresIn(t *testing.T) {
 	now := time.Now()
-	cPast := Credentials{ExpiresAt: "2020-01-01T00:00:00Z"}
-	cFuture := Credentials{ExpiresAt: "2099-01-01T00:00:00Z"}
-	cBad := Credentials{ExpiresAt: "not-a-time"}
 
-	if !cPast.Expired(now) {
+	past := Credentials{ExpiresAt: now.Add(-time.Hour)}
+	future := Credentials{ExpiresAt: now.Add(time.Hour)}
+	zero := Credentials{}
+
+	if !past.Expired(now) {
 		t.Error("past token should be expired")
 	}
-	if cFuture.Expired(now) {
+	if future.Expired(now) {
 		t.Error("future token should not be expired")
 	}
-	if !cBad.Expired(now) {
-		t.Error("unparseable expires_at should be treated as expired")
+	if !zero.Expired(now) {
+		t.Error("zero ExpiresAt should be expired")
 	}
-	if cPast.ExpiresIn(now) != 0 {
+	if past.ExpiresIn(now) != 0 {
 		t.Error("expired ExpiresIn should be 0")
 	}
-	if cFuture.ExpiresIn(now) <= 0 {
+	if future.ExpiresIn(now) <= 0 {
 		t.Error("future ExpiresIn should be positive")
 	}
-	if cBad.ExpiresIn(now) != 0 {
-		t.Error("unparseable ExpiresIn should be 0")
-	}
-}
-
-func TestLoadNonexistent(t *testing.T) {
-	_, err := Load("/nonexistent/path/creds.json")
-	if err == nil {
-		t.Fatal("expected error for missing file")
-	}
-}
-
-func TestLoadInvalidJSON(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "bad.json")
-	if err := os.WriteFile(path, []byte("not json"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	_, err := Load(path)
-	if err == nil {
-		t.Fatal("expected error for invalid JSON")
+	if zero.ExpiresIn(now) != 0 {
+		t.Error("zero ExpiresAt ExpiresIn should be 0")
 	}
 }

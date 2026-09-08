@@ -135,10 +135,85 @@ additional guest users, and no boundary at all against the agent itself.
 
 `~/.claude/.credentials.json` is the operator's live login session. It must
 never be read, written, mounted, or rotated by this project. This project
-uses `~/.config/nexus3/creds.json` or an operator-named path instead.
+uses `~/.config/nexus3/claude-dedicated/.credentials.json` or an
+operator-named path instead.
 
 `internal/core/credmount/` enforces the protected path with an explicit guard
 and a test.
+
+**AC5 scope note.** The new dedicated store is at
+`~/.config/nexus3/claude-dedicated/.credentials.json`, which is not under
+`~/.claude`. It is therefore in scope for mounting by this project.
+`~/.claude/.credentials.json` itself remains strictly off-limits and is still
+rejected by the path guard. AC5 is MET.
+
+## Credential store — path and shape
+
+**Old store (dead).** `~/.config/nexus3/creds.json`. Flat JSON, snake_case:
+`access_token`, `refresh_token`, `expires_at` (RFC 3339 string), `token_type`,
+`client_id`, `client_secret`, `token_endpoint`. This file's access token is
+revoked and its refresh token is invalid; see the s16-AC6 section below for
+how that happened.
+
+**New store (live).** `~/.config/nexus3/claude-dedicated/.credentials.json`,
+mode 0600. One top-level key `claudeAiOauth` containing camelCase fields:
+`accessToken`, `refreshToken`, `expiresAt` (UNIX epoch milliseconds),
+`refreshTokenExpiresAt` (epoch milliseconds), `scopes`, `subscriptionType`,
+`rateLimitTier`. The store carries no `client_id`, `client_secret`, or
+`token_endpoint`.
+
+`DefaultClientID` (`9d1c250a-e61b-44d9-88ed-5944d1962f5e`) and
+`DefaultTokenEndpoint` (`https://platform.claude.com/v1/oauth/token`) are now
+constants in `internal/core/credmount/refresh.go`, not fields read from the
+store. Note that `platform.claude.com` is the correct host for tokens issued
+against this store; `console.anthropic.com` is an older host.
+
+### Defect 1 — silent empty credential (fixed)
+
+The flat struct was pointed at the nested file. `encoding/json` ignores
+unknown keys, so `Load()` returned a nil error with every field empty.
+Downstream that surfaced as an inexplicable 401 in the guest rather than a
+parse failure on the host — strictly worse than an error, because the failure
+appeared to be a dead token, not a host-side parse bug.
+
+**Standing rule:** a credential loader must fail loudly on any store it cannot
+parse and must never return a zero-valued credential with a nil error. An empty
+access token is itself an error.
+
+Fixed by: shape detection (nested `claudeAiOauth` wrapper vs legacy flat),
+epoch-millisecond time handling, an error on unrecognised shape or invalid
+JSON or empty access token, and round-trip preservation of unmodelled keys so
+a save cannot drop fields the loader does not model.
+
+### Defect 2 — 512-byte body cap (fixed, commit b6e1c42)
+
+`refresh.go` read the token endpoint response through
+`io.ReadAll(io.LimitReader(resp.Body, 512))`. The real response exceeds 512
+bytes, so `json.Unmarshal` failed and the rotated token pair was discarded
+without being written. Because an Anthropic refresh immediately revokes the
+prior token with zero overlap (F4), this left the store holding a dead pair
+with no recovery path other than a fresh login.
+
+**Standing rules.** Never cap a token-endpoint response body. Persist the raw
+response bytes to disk before unmarshalling, so that a parse bug leaves the
+rotated pair recoverable. Both rules are now enforced by tests, including a
+regression test that fails if a cap is reintroduced.
+
+### Guest extraction trap
+
+In-guest scripts previously extracted the token with a sed one-liner keyed on
+the flat field name `access_token`. Against the nested store that matched
+nothing, `TOKEN` came out empty, and the guest's API call returned 401 — which
+reads exactly like a dead token but was an extraction bug on the guest side.
+
+Both scripts now key on `accessToken` and fail loudly with an
+`EXTRACTION_FAILED:` marker and a non-zero exit when the extracted token is
+empty, so this class of bug cannot again present as an auth failure.
+
+Guest image note: the base image is minimal Alpine. `busybox sed` is present;
+`jq` is not. `curl` is not present by default and must be installed with
+`apk add --no-cache curl` before use; only `busybox wget` is available out of
+the box.
 
 ## Live results, 2026-09-07
 
@@ -279,3 +354,88 @@ exists to catch. It now matches `HTTP/1.x NNN` directly. The probe body also
 asked for `claude-3-5-haiku-20241022`, whose 404 is an authenticated answer but
 not a positive one; it now asks for `claude-haiku-4-5`, which returns 200 on a
 live token.
+
+**Fix status (commit b6e1c42).** The 512-byte cap is now `1<<20`. The store
+shape has been updated to the new nested layout. The standing rules from Defect
+2 above are enforced by regression tests. The old store at
+`~/.config/nexus3/creds.json` remains dead; the live store is at
+`~/.config/nexus3/claude-dedicated/.credentials.json`.
+
+## AC status — 2026-09-08
+
+**AC1 — MET (re-confirmed).** Guest reached `api.anthropic.com/v1/messages`
+and got HTTP 200 with model `claude-haiku-4-5`. The guest's token digest
+matched the host's (`dec964bb5553`). This run confirmed AC1 against the new
+nested store.
+
+**AC2 — BLOCKED.** Mount propagation is settled in the design's favour: both
+write modes (`Save` rename and `SaveInPlace` O_TRUNC) propagate through
+`--mount-file` because the guest re-reads the host path per access. What
+remains untested is whether a real refresh reaches a running guest. At
+`2026-09-08T01:28:19Z` the token endpoint returned HTTP 429
+`rate_limit_error` ("Rate limited. Please try again later.") with no
+`Retry-After` header and no documented window. The failure was non-destructive:
+`store_untouched=true` and the pre-existing access token still returned HTTP
+200 afterwards, confirming a 429 performs no rotation and the operator's login
+survived.
+
+**AC3 — MET (unchanged).** Branch (a): the rw write lands and the inode is
+stable. The test writes to a copy, never the live store.
+
+**AC4 — MET (unchanged).** The guest's default (root) process reads the live
+token in full; a non-root guest user is denied by the preserved host file mode.
+The mount is read-write by operator decision (D-15), not by backend limitation:
+a read-only store cannot accept an in-guest refresh, which would make host-side
+propagation load-bearing while AC2 remains unproven. The earlier claim that
+`ReadOnly` was silently ignored on `--mount-file` is RETRACTED — see the s18
+correction above. `ReadOnly` is expressible and live-proven; the defect was
+`livemsb/harness.go` discarding `BindMount.ReadOnly`, which meant every
+credential-mount measurement taken through that harness ran read-write
+regardless of what the test asked. That is fixed, and the measurements in this
+section were rw as intended.
+
+**AC5 — MET.** The new dedicated store is not under `~/.claude`, so it is in
+scope for mounting. `~/.claude/.credentials.json` remains strictly off-limits
+and is still rejected by the path guard.
+
+**AC6 — BLOCKED.** Explicitly not passed vacuously. Measurement design: two
+concurrent sandboxes mount the same store; both are proven to reach HTTP 200
+with identical token digests (`dec964bb5553`); then one host-side refresh is
+performed and both guests call again. The refreshing side answers AC2 and the
+bystander answers AC6. This settles both ACs off a single rotation, because
+with no broker, whichever side refreshes revokes the other's token (F4), and
+refresh attempts are too rate-limited to spend one per AC. AC6 cannot be closed
+until a refresh returns 2xx.
+
+## Operational guardrails
+
+The test that spends a refresh is gated behind both `HERDR_MSB_LIVE=1` and
+`HERDR_MSB_LIVE_REFRESH=1` so it cannot be spent by an ordinary live run.
+
+Before any refresh attempt: back up the store AND verify the backup is
+independently usable — load it and make a real API call returning HTTP 200.
+A backup taken after rotation holds the same dead pair.
+
+At most one live sandbox at a time (two only briefly for AC6) at ≤2 GiB.
+Guest RAM is memfd-backed, resident, and unswappable.
+
+## How to run
+
+AC1 and AC4 (safe, no refresh):
+
+    HERDR_MSB_LIVE=1 make test GOTEST_P=1 GOTEST_PARALLEL=1 \
+      GOTEST_ARGS="-tags=live -run 'TestACCredentialMountLive/AC1|TestACCredentialMountLive/AC4'"
+
+AC3 (safe, writes to a copy):
+
+    HERDR_MSB_LIVE=1 make test GOTEST_P=1 GOTEST_PARALLEL=1 \
+      GOTEST_ARGS="-tags=live -run TestGuestWriteDirection"
+
+AC2 and AC6 (spends a refresh — back up the store first and verify the backup):
+
+    HERDR_MSB_LIVE=1 HERDR_MSB_LIVE_REFRESH=1 make test GOTEST_P=1 GOTEST_PARALLEL=1 \
+      GOTEST_ARGS="-tags=live -run TestAC2AC6RefreshPropagation"
+
+Bare `go test ./...` is forbidden: without the `make` wrapper the test binary
+runs at `GOMAXPROCS` and has tripped the global OOM killer, tearing down the
+login session.

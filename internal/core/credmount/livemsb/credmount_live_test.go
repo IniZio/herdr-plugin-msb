@@ -24,11 +24,7 @@ const (
 
 func hostCredsPath(t *testing.T) string {
 	t.Helper()
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatalf("home dir: %v", err)
-	}
-	return filepath.Join(home, ".config", "nexus3", "creds.json")
+	return credmount.DefaultStorePath()
 }
 
 func digest(s string) string {
@@ -57,8 +53,8 @@ func backupStore(t *testing.T, path string) {
 
 func apiCallScript() string {
 	return `set -u
-TOKEN=$(sed -n 's/.*"access_token"[^"]*"\([^"]*\)".*/\1/p' ` + guestCredsPath + `)
-if [ -z "$TOKEN" ]; then echo "status=000 reason=no-token-in-mount"; exit 0; fi
+TOKEN=$(sed -n 's/.*"accessToken"[^"]*"\([^"]*\)".*/\1/p' ` + guestCredsPath + `)
+if [ -z "$TOKEN" ]; then echo "EXTRACTION_FAILED: accessToken empty in mount"; exit 1; fi
 CODE=$(curl -sS -o /tmp/resp.body -w '%{http_code}' -A 'curl/8.5.0' \
   -H "authorization: Bearer $TOKEN" \
   -H 'anthropic-version: 2023-06-01' \
@@ -72,7 +68,7 @@ if [ "$CODE" != "200" ]; then echo "body=$(head -c 200 /tmp/resp.body | tr -d '\
 }
 
 func tokenDigestScript() string {
-	return `sed -n 's/.*"access_token"[^"]*"\([^"]*\)".*/\1/p' ` + guestCredsPath +
+	return `sed -n 's/.*"accessToken"[^"]*"\([^"]*\)".*/\1/p' ` + guestCredsPath +
 		` | tr -d '\n' | sha256sum | cut -d' ' -f1`
 }
 

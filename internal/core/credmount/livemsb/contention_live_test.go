@@ -24,11 +24,7 @@ const (
 
 func defaultStorePath(t *testing.T) string {
 	t.Helper()
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatalf("UserHomeDir: %v", err)
-	}
-	p := filepath.Join(home, ".config", "nexus3", "creds.json")
+	p := credmount.DefaultStorePath()
 	if _, err := os.Stat(p); err != nil {
 		t.Skipf("credential store not found at %s: %v", p, err)
 	}
@@ -51,11 +47,11 @@ func copyCredFile(src, dst string) error {
 	return os.WriteFile(dst, data, 0600)
 }
 
-// guestAPIScript reads the access_token from guestPath and POSTs to Anthropic, printing "STATUS=<N>".
 func guestAPIScript(guestPath string) string {
 	body := `{"model":"claude-haiku-4-5","max_tokens":8,"messages":[{"role":"user","content":"ping"}]}`
 	return fmt.Sprintf(
-		`TOKEN=$(grep '"access_token"' %s | awk -F'"' '{print $4}'); `+
+		`TOKEN=$(sed -n 's/.*"accessToken"[^"]*"\([^"]*\)".*/\1/p' %s); `+
+			`if [ -z "$TOKEN" ]; then echo "EXTRACTION_FAILED: accessToken empty"; echo "STATUS=EMPTY"; exit 1; fi; `+
 			`OUT=$(wget -q -O - --server-response `+
 			`--post-data='%s' `+
 			`--header="authorization: Bearer $TOKEN" `+
@@ -151,11 +147,7 @@ func TestConcurrentMountContention(t *testing.T) {
 
 	store := defaultStorePath(t)
 
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatalf("UserHomeDir: %v", err)
-	}
-	backup := filepath.Join(home, ".config", "nexus3", "creds.json.ac6-backup")
+	backup := credmount.DefaultStorePath() + ".ac6-backup"
 	if err := copyCredFile(store, backup); err != nil {
 		t.Fatalf("backup store: %v", err)
 	}
