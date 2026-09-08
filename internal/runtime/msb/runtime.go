@@ -20,11 +20,20 @@ const (
 	nameSep      = "--"
 )
 
-type Runtime struct{}
+type Runtime struct {
+	acct admission.Accountant
+}
 
 var _ coreruntime.Runtime = (*Runtime)(nil)
 
 func New() *Runtime { return &Runtime{} }
+
+func (r *Runtime) accountant() admission.Accountant {
+	if r.acct != nil {
+		return r.acct
+	}
+	return r
+}
 
 func SDKName(project, name string) string {
 	if project == "" {
@@ -186,7 +195,7 @@ func (r *Runtime) CreateAndBoot(ctx context.Context, spec coreruntime.SandboxSpe
 	if name == "" {
 		return coreruntime.SandboxRef{}, fmt.Errorf("msb: spec has no name")
 	}
-	if err := admission.Admit(ctx, r, spec.MemoryMiB); err != nil {
+	if err := admission.Admit(ctx, r.accountant(), spec.MemoryMiB); err != nil {
 		return coreruntime.SandboxRef{}, err
 	}
 	opts := append(SandboxOptions(spec), msbsdk.WithDetached())

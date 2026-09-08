@@ -50,7 +50,7 @@ func (r *Runtime) RunEphemeral(ctx context.Context, spec coreruntime.SandboxSpec
 	if len(req.Argv) == 0 {
 		return coreruntime.ExecResult{}, fmt.Errorf("msb: run-ephemeral: argv must not be empty")
 	}
-	if err := admission.Admit(ctx, r, spec.MemoryMiB); err != nil {
+	if err := admission.Admit(ctx, r.accountant(), spec.MemoryMiB); err != nil {
 		return coreruntime.ExecResult{}, err
 	}
 	opts := append(SandboxOptions(spec), msbsdk.WithDetached(), msbsdk.WithEphemeral(true))
