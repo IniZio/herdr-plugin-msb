@@ -50,6 +50,32 @@ func (r *Runtime) RunEphemeral(ctx context.Context, spec coreruntime.SandboxSpec
 	return result, nil
 }
 
+type ptyResizer interface {
+	Resize(ctx context.Context, rows, cols uint16) error
+}
+
+// pumpResize forwards terminal size changes to the guest PTY until the exec
+// finishes. Resize errors are dropped: a failed resize must not abort a
+// working session.
+func pumpResize(ctx context.Context, h ptyResizer, ch <-chan coreruntime.WinSize, done <-chan struct{}) {
+	for {
+		select {
+		case <-done:
+			return
+		case <-ctx.Done():
+			return
+		case ws, ok := <-ch:
+			if !ok {
+				return
+			}
+			if ws.Rows == 0 && ws.Cols == 0 {
+				continue
+			}
+			_ = h.Resize(ctx, ws.Rows, ws.Cols)
+		}
+	}
+}
+
 func streamExec(ctx context.Context, sb *msbsdk.Sandbox, req coreruntime.ExecRequest) (coreruntime.ExecResult, error) {
 	stdout := req.Stdout
 	if stdout == nil {
@@ -85,6 +111,12 @@ func streamExec(ctx context.Context, sb *msbsdk.Sandbox, req coreruntime.ExecReq
 		if rerr := handle.Resize(ctx, req.Rows, req.Cols); rerr != nil {
 			return coreruntime.ExecResult{}, fmt.Errorf("msb: resize: %w", rerr)
 		}
+	}
+
+	if req.TTY && req.ResizeCh != nil {
+		done := make(chan struct{})
+		defer close(done)
+		go pumpResize(ctx, handle, req.ResizeCh, done)
 	}
 
 	if req.TTY {

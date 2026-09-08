@@ -122,12 +122,40 @@ func runPS(ctx context.Context, args []string, out, errW io.Writer) int {
 	return 0
 }
 
+// ptySize resolves the guest PTY size: explicit flags win, else the real size
+// of whichever standard stream is a terminal, else a conservative 24x80.
+func ptySize(rows, cols uint16) coreruntime.WinSize {
+	if rows > 0 && cols > 0 {
+		return coreruntime.WinSize{Rows: rows, Cols: cols}
+	}
+	for _, f := range []*os.File{os.Stdin, os.Stdout, os.Stderr} {
+		if ws, ok := terminalSize(int(f.Fd())); ok {
+			if rows > 0 {
+				ws.Rows = rows
+			}
+			if cols > 0 {
+				ws.Cols = cols
+			}
+			return ws
+		}
+	}
+	if rows == 0 {
+		rows = 24
+	}
+	if cols == 0 {
+		cols = 80
+	}
+	return coreruntime.WinSize{Rows: rows, Cols: cols}
+}
+
 func runExec(ctx context.Context, args []string, out, errW io.Writer) int {
 	fs := flag.NewFlagSet("exec", flag.ContinueOnError)
 	fs.SetOutput(errW)
 	project := fs.String("project", service.DefaultProject, "project name")
 	cwd := fs.String("cwd", "", "working directory in guest")
 	pty := fs.Bool("pty", false, "allocate a PTY in the guest")
+	rows := fs.Uint("rows", 0, "guest PTY rows (0=detect from terminal)")
+	cols := fs.Uint("cols", 0, "guest PTY cols (0=detect from terminal)")
 	var envs envList
 	fs.Var(&envs, "env", "env var KEY=VALUE (repeatable)")
 	if err := fs.Parse(args); err != nil {
@@ -167,8 +195,13 @@ func runExec(ctx context.Context, args []string, out, errW io.Writer) int {
 	if *pty {
 		req.TTY = true
 		req.StdinReader = os.Stdin
-		req.Rows = 24
-		req.Cols = 80
+		resizeCh, cleanup, raw := enterRawMode(int(os.Stdin.Fd()))
+		defer cleanup()
+		if raw {
+			req.ResizeCh = resizeCh
+		}
+		ws := ptySize(uint16(*rows), uint16(*cols))
+		req.Rows, req.Cols = ws.Rows, ws.Cols
 	}
 	res, err := svc.Exec(ctx, name, req)
 	if err != nil {
