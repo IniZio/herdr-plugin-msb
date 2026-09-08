@@ -7,6 +7,12 @@ platforms = ["linux"]
 [[build]]
 command = ["make", "build"]
 
+[[panes]]
+id = "shell"
+title = "Microsandbox guest shell"
+placement = "tab"
+command = ["sh", "plugins/herdr/bin/pane.sh", "shell"]
+
 [[actions]]
 id = "sandbox-list"
 title = "List Sandboxes"
