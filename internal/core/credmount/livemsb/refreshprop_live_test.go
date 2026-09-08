@@ -6,6 +6,7 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +17,6 @@ import (
 
 const (
 	guestPropPath   = "/mnt/creds.json"
-	refreshRawDir   = "/tmp/claude-1003/s16-refresh-raw"
 	propBackupPath  = "/tmp/claude-1003/s16-creds-prop-backup.json"
 	guestMemMiB     = 1024
 	apiMessagesURL  = "https://api.anthropic.com/v1/messages"
@@ -50,7 +50,7 @@ func backupForProp(t *testing.T, path string) {
 		t.Fatalf("backup carries an empty access token")
 	}
 	if code := hostAPIStatus(t, c.AccessToken); code != 200 {
-		t.Fatalf("backup token is not independently usable: HTTP %d", code)
+		t.Fatalf("backup token not independently usable: HTTP %d", code)
 	}
 	t.Logf("MEASURE backup verified usable: path=%s bytes=%d http=200", propBackupPath, len(data))
 }
@@ -99,6 +99,62 @@ func guestCall(t *testing.T, sb *livemsb.Sandbox, label string) (status, tokDige
 	return status, tokDigest
 }
 
+func TestAC1KeepAlive(t *testing.T) {
+	// WAIVER D-2: synthetic credentials; token endpoint not contacted; API calls return 401.
+	if os.Getenv("HERDR_MSB_LIVE") != "1" {
+		t.Skip("HERDR_MSB_LIVE not set")
+	}
+
+	dir := t.TempDir()
+	credFile := filepath.Join(dir, "creds.json")
+	tokenA := "synthetic-keepalive-token-AAAA1111"
+	tokenB := "synthetic-keepalive-token-BBBB2222"
+	if err := os.WriteFile(credFile, []byte(syntheticNestedCreds(tokenA, "ref-x")), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	sb := livemsb.RequireSandbox(t, livemsb.SandboxOpts{
+		Name:       "s16-ac1-keepalive",
+		Image:      "alpine",
+		MemoryMiB:  512,
+		VCPUs:      1,
+		FileMounts: []livemsb.BindMount{{HostPath: credFile, GuestPath: "/mnt/creds.json"}},
+	})
+
+	script := guestKeepAliveLoopScript("/mnt/creds.json", "", 4, 3)
+	outCh := make(chan string, 1)
+	go func() {
+		out, _, _, _ := sb.Sh(t.Context(), script)
+		outCh <- out
+	}()
+
+	time.Sleep(5 * time.Second)
+	if err := os.WriteFile(credFile, []byte(syntheticNestedCreds(tokenB, "ref-x")), 0600); err != nil {
+		t.Fatalf("rotate credential file: %v", err)
+	}
+	t.Logf("MEASURE AC1: host rotated file to token-B at 5s into loop")
+
+	rawOut := <-outCh
+	t.Logf("MEASURE AC1 keep-alive loop output:\n%s", rawOut)
+
+	digA := digest(tokenA)
+	digB := digest(tokenB)
+	staleCount, freshCount := 0, 0
+	for _, line := range strings.Split(rawOut, "\n") {
+		if strings.Contains(line, "cached_digest="+digA[:12]) {
+			staleCount++
+		}
+		if strings.Contains(line, "file_digest="+digB[:12]) {
+			freshCount++
+		}
+	}
+	t.Logf("MEASURE AC1: stale_iters=%d fresh_file_reads=%d (digA=%s digB=%s)",
+		staleCount, freshCount, digA[:12], digB[:12])
+	if staleCount == 0 {
+		t.Fatalf("AC1 UNMET: no iteration reported stale cached token — loop may re-read each iter")
+	}
+}
+
 func TestAC2AC6RefreshPropagation(t *testing.T) {
 	requireRefreshBudget(t)
 
@@ -107,6 +163,9 @@ func TestAC2AC6RefreshPropagation(t *testing.T) {
 		t.Fatalf("credmount.FileMount rejected the store path: %v", err)
 	}
 	backupForProp(t, credsPath)
+	// NOTE(TBR-8): backupForProp verified backup usability via api.anthropic.com/v1/messages.
+	// That endpoint and platform.claude.com/v1/oauth/token are SEPARATE rate limiters;
+	// a 200 from messages does NOT indicate token endpoint availability and cannot guard this spend.
 
 	before, err := credmount.Load(credsPath)
 	if err != nil {
@@ -115,9 +174,6 @@ func TestAC2AC6RefreshPropagation(t *testing.T) {
 	oldAccess := before.AccessToken
 	if oldAccess == "" {
 		t.Fatalf("live store carries an empty access token")
-	}
-	if err := os.MkdirAll(refreshRawDir, 0o700); err != nil {
-		t.Fatalf("mkdir raw dir: %v", err)
 	}
 
 	mounts := []livemsb.BindMount{{HostPath: credsPath, GuestPath: guestPropPath}}
@@ -137,25 +193,30 @@ func TestAC2AC6RefreshPropagation(t *testing.T) {
 		t.Fatalf("baseline not established: A=%s B=%s", statusA0, statusB0)
 	}
 	if digA0 != digB0 {
-		t.Fatalf("the two guests read different tokens from one store: %s vs %s", short(digA0), short(digB0))
+		t.Fatalf("guests read different tokens from one store: %s vs %s", short(digA0), short(digB0))
 	}
 
-	refresher := credmount.Refresher{RawDir: refreshRawDir, UserAgent: "curl/8.5.0"}
-	refreshCtx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+	refreshCtx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
 	defer cancel()
 	attemptAt := time.Now().UTC().Format(time.RFC3339)
-	after, rerr := refresher.RefreshFile(refreshCtx, credsPath, true)
-	if rerr != nil {
+
+	refreshScript := guestRefreshScript(credmount.DefaultTokenEndpoint, credmount.DefaultClientID, guestPropPath)
+	rOut, rErr, rCode, rExecErr := sbA.Sh(refreshCtx, refreshScript)
+	if rExecErr != nil || rCode != 0 || !strings.Contains(rOut, "REFRESH_OK") {
 		reread, lerr := credmount.Load(credsPath)
 		untouched := lerr == nil && reread.AccessToken == oldAccess
 		stillGood := untouched && hostAPIStatus(t, oldAccess) == 200
-		t.Fatalf("AC2/AC6 BLOCKED: host refresh at %s failed (store_untouched=%v old_token_still_200=%v): %q",
-			attemptAt, untouched, stillGood, strings.ReplaceAll(rerr.Error(), "\n", " "))
+		t.Fatalf("AC2/AC6 BLOCKED: guest refresh at %s failed (exit=%d store_untouched=%v old_token_still_200=%v): %s %s",
+			attemptAt, rCode, untouched, stillGood, rOut, rErr)
 	}
-	t.Logf("MEASURE host refresh succeeded at %s: rotated=%v raw_dir=%s",
-		attemptAt, after.AccessToken != oldAccess, refreshRawDir)
+	t.Logf("MEASURE guest refresh (AC2) succeeded at %s: %s", attemptAt, strings.TrimSpace(rOut))
+
+	after, err := credmount.Load(credsPath)
+	if err != nil {
+		t.Fatalf("load host store after guest refresh: %v", err)
+	}
 	if after.AccessToken == oldAccess {
-		t.Fatalf("refresh returned 2xx but the access token did not rotate")
+		t.Fatalf("guest refresh completed but access token did not rotate on host side")
 	}
 
 	oldStatus := hostAPIStatus(t, oldAccess)
@@ -163,15 +224,15 @@ func TestAC2AC6RefreshPropagation(t *testing.T) {
 
 	statusA1, digA1 := guestCall(t, sbA, "post-refresh sandbox A (AC2)")
 	if digA1 == digA0 {
-		t.Errorf("AC2 UNMET: sandbox A still reads the pre-refresh token (digest unchanged %s); the guest cached it rather than re-reading the mount", short(digA0))
+		t.Errorf("AC2 UNMET: sandbox A still reads pre-refresh token (digest unchanged %s)", short(digA0))
 	}
 	if statusA1 != "200" {
-		t.Errorf("AC2 UNMET: sandbox A next call after host refresh returned HTTP %s, want 200", statusA1)
+		t.Errorf("AC2 UNMET: sandbox A next call after guest refresh returned HTTP %s, want 200", statusA1)
 	}
 
 	statusB1, digB1 := guestCall(t, sbB, "post-refresh sandbox B (AC6)")
 	if statusB1 == "401" {
-		t.Errorf("AC6 UNMET: bystander sandbox B observed HTTP 401 caused by sandbox A's rotation (digest %s)", short(digB1))
+		t.Errorf("AC6 UNMET: bystander sandbox B observed HTTP 401 from sandbox A's rotation (digest %s)", short(digB1))
 	} else if statusB1 != "200" {
 		t.Errorf("AC6 UNMET: bystander sandbox B returned HTTP %s, want 200", statusB1)
 	}
