@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	debug "runtime/debug"
 	"strconv"
 	"strings"
@@ -126,6 +127,7 @@ func runExec(ctx context.Context, args []string, out, errW io.Writer) int {
 	fs.SetOutput(errW)
 	project := fs.String("project", service.DefaultProject, "project name")
 	cwd := fs.String("cwd", "", "working directory in guest")
+	pty := fs.Bool("pty", false, "allocate a PTY in the guest")
 	var envs envList
 	fs.Var(&envs, "env", "env var KEY=VALUE (repeatable)")
 	if err := fs.Parse(args); err != nil {
@@ -161,6 +163,12 @@ func runExec(ctx context.Context, args []string, out, errW io.Writer) int {
 		Cwd:    *cwd,
 		Stdout: out,
 		Stderr: errW,
+	}
+	if *pty {
+		req.TTY = true
+		req.StdinReader = os.Stdin
+		req.Rows = 24
+		req.Cols = 80
 	}
 	res, err := svc.Exec(ctx, name, req)
 	if err != nil {

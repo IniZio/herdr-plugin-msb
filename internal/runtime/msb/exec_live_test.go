@@ -230,6 +230,52 @@ func TestLiveRunEphemeral(t *testing.T) {
 	}
 }
 
+func TestLiveExecTTY(t *testing.T) {
+	RequireLive(t)
+	ctx := LiveContext(t)
+	r := New()
+	spec := LiveSpec("exec-tty")
+	ref, err := r.CreateAndBoot(ctx, spec)
+	if err != nil {
+		t.Fatalf("CreateAndBoot: %v", err)
+	}
+	CleanupSandbox(t, r, ref)
+
+	var buf bytes.Buffer
+	res, err := r.Exec(ctx, ref, coreruntime.ExecRequest{
+		Argv:   []string{"sh", "-c", "tty"},
+		TTY:    true,
+		Rows:   24,
+		Cols:   80,
+		Stdout: &buf,
+	})
+	if err != nil {
+		t.Fatalf("Exec TTY: %v", err)
+	}
+	if res.ExitCode != 0 {
+		t.Fatalf("exit code = %d, want 0", res.ExitCode)
+	}
+	got := strings.TrimSpace(buf.String())
+	if !strings.HasPrefix(got, "/dev/") {
+		t.Fatalf("tty output = %q, want /dev/pts/N", got)
+	}
+
+	var bufNoTTY bytes.Buffer
+	res2, err := r.Exec(ctx, ref, coreruntime.ExecRequest{
+		Argv:   []string{"sh", "-c", "tty"},
+		Stdout: &bufNoTTY,
+	})
+	if err != nil {
+		t.Fatalf("Exec no-TTY: %v", err)
+	}
+	if res2.ExitCode == 0 {
+		t.Fatalf("tty without PTY: expected non-zero exit, got 0 (output: %q)", strings.TrimSpace(bufNoTTY.String()))
+	}
+	if got2 := strings.TrimSpace(bufNoTTY.String()); got2 != "not a tty" {
+		t.Fatalf("tty without PTY output = %q, want \"not a tty\"", got2)
+	}
+}
+
 func TestLiveExecStoppedSandboxErrors(t *testing.T) {
 	RequireLive(t)
 	ctx := LiveContext(t)

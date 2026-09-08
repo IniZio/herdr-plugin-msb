@@ -67,7 +67,9 @@ func streamExec(ctx context.Context, sb *msbsdk.Sandbox, req coreruntime.ExecReq
 	if req.Cwd != "" {
 		execOpts = append(execOpts, msbsdk.WithExecCwd(req.Cwd))
 	}
-	if req.Stdin != "" {
+	if req.TTY {
+		execOpts = append(execOpts, msbsdk.WithExecTTY(true), msbsdk.WithExecStdinPipe())
+	} else if req.Stdin != "" {
 		execOpts = append(execOpts, msbsdk.WithExecStdinPipe())
 	}
 
@@ -79,7 +81,25 @@ func streamExec(ctx context.Context, sb *msbsdk.Sandbox, req coreruntime.ExecReq
 	}
 	defer handle.Close()
 
-	if req.Stdin != "" {
+	if req.TTY && (req.Rows > 0 || req.Cols > 0) {
+		if rerr := handle.Resize(ctx, req.Rows, req.Cols); rerr != nil {
+			return coreruntime.ExecResult{}, fmt.Errorf("msb: resize: %w", rerr)
+		}
+	}
+
+	if req.TTY {
+		sink := handle.TakeStdin()
+		if sink != nil {
+			if req.StdinReader != nil {
+				go func() {
+					_, _ = io.Copy(sink, req.StdinReader)
+					_ = sink.Close()
+				}()
+			} else {
+				_ = sink.Close()
+			}
+		}
+	} else if req.Stdin != "" {
 		sink := handle.TakeStdin()
 		if _, err := io.WriteString(sink, req.Stdin); err != nil {
 			return coreruntime.ExecResult{}, fmt.Errorf("msb: stdin write: %w", err)
