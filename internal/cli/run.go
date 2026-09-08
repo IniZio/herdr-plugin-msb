@@ -10,7 +10,7 @@ const combinedUsage = `usage: herdr-plugin-msb <command>
 
 sandbox:  create  ps  exec  start  stop  rm
 plugin:   declare  status  list  local-agent
-space:    space-create  space-convert  space-open-pane  new-tab
+space:    space-create  space-convert  space-open-pane  new-tab  space-prune
 other:    version  help`
 
 func Run(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
@@ -44,6 +44,8 @@ func Run(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
 		return runSpaceOpenPane(ctx, argv[1:], stdout, stderr)
 	case "new-tab":
 		return runNewTab(ctx, argv[1:], stdout, stderr)
+	case "space-prune":
+		return runSpacePrune(ctx, argv[1:], stdout, stderr)
 	case "version":
 		return runVersion(ctx, argv[1:], stdout, stderr)
 	default:

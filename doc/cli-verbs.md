@@ -30,6 +30,16 @@ deliberate decline.
 | `list` | List the pending port-forward declaration queue | `list` is the port queue; `ps` is sandboxes — the names are not interchangeable |
 | `local-agent` | Run the local port-forward agent loop | The agent loop is the mechanism that applies declared ports via SSH forwarding; it cannot be inlined into another verb without making the CLI process permanent |
 
+### Space verbs
+
+| Verb | What it does | Why it ships |
+|---|---|---|
+| `space-create` | Create a sandbox and open a guest pane in a new herdr workspace | First-class space creation from the CLI |
+| `space-convert` | Convert an existing worktree-backed herdr workspace to an msb sandbox space | Allows adopting an existing workspace without recreating it |
+| `space-open-pane` | Open a guest pane inside an existing space | Re-attach after a detach without destroying and recreating the sandbox |
+| `new-tab` | Open a new guest tab inside the current space, or a host tab elsewhere | Uniform new-tab UX regardless of context |
+| `space-prune` | Survey (dry run by default) or reclaim (`--apply`) msb sandboxes whose bound herdr workspace or worktree checkout is gone; `--apply` without `--workspace` requires `--all` | Prevents stale binding accumulation after workspace or worktree removal; fail-safe design guards against accidental mass-reclaim |
+
 ### Other
 
 | Verb | What it does | Why it ships |
