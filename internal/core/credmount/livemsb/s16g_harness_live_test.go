@@ -3,6 +3,7 @@
 package livemsb_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,10 +25,16 @@ func installCurl(t *testing.T, sb *livemsb.Sandbox) {
 func stubAndRefresh(credPath, newAccess, newRefresh string) string {
 	stubJSON := `{"access_token":"` + newAccess + `","refresh_token":"` + newRefresh + `"}`
 	refresh := guestRefreshScript("http://127.0.0.1:18080/token", "s16g-client", credPath)
-	return "STUB_JSON='" + stubJSON + "'\n" +
-		"(printf 'HTTP/1.1 200 OK\\r\\nContent-Type: application/json\\r\\n\\r\\n'; printf '%s' \"$STUB_JSON\") | nc -l -p 18080 &\n" +
-		"sleep 1\n" +
-		refresh
+	return fmt.Sprintf(
+		"STUB_JSON='%s'\n"+
+			"NC_MARKER=/tmp/nc-stub-$$\nrm -f \"$NC_MARKER\"\n"+
+			"{ (printf 'HTTP/1.1 200 OK\\r\\nContent-Type: application/json\\r\\n\\r\\n'; printf '%%s' \"$STUB_JSON\") | timeout 5 nc -l -p 18080 && touch \"$NC_MARKER\"; } &\n"+
+			"NC_BG=$!\nsleep 1\n"+
+			"(\n%s\n); REFRESH_EXIT=$?\n"+
+			"sleep 1\nkill $NC_BG 2>/dev/null || true\nwait $NC_BG 2>/dev/null || true\n"+
+			"if [ -f \"$NC_MARKER\" ]; then echo stub_contacted=true; else echo stub_contacted=false; fi\n"+
+			"exit $REFRESH_EXIT\n",
+		stubJSON, refresh)
 }
 
 func TestAC3GDirMountRefreshScript(t *testing.T) {
@@ -54,7 +61,7 @@ func TestAC3GDirMountRefreshScript(t *testing.T) {
 	out, errOut, code, err := sb.Sh(t.Context(), stubAndRefresh("/mnt/claude-dir/.credentials.json", newAccess, "s16g-ref-B-dir"))
 	t.Logf("MEASURE AC3G dir stdout: %s", strings.TrimSpace(out))
 	t.Logf("MEASURE AC3G dir stderr: %s", strings.TrimSpace(errOut))
-	t.Logf("MEASURE AC3G dir exit=%d err=%v", code, err)
+	t.Logf("MEASURE AC3G dir exit=%d err=%v stub_contacted=%s", code, err, field(out, "stub_contacted"))
 
 	if err != nil || code != 0 || !strings.Contains(out, "REFRESH_OK") {
 		t.Fatalf("AC3G dir: script failed: out=%s err=%s exit=%d", out, errOut, code)
@@ -93,7 +100,7 @@ func TestAC3GFileMountRefreshScript(t *testing.T) {
 	out, errOut, code, err := sb.Sh(t.Context(), stubAndRefresh("/mnt/.credentials.json", "s16g-tok-B-file", "s16g-ref-B-file"))
 	t.Logf("MEASURE AC3G file stdout: %s", strings.TrimSpace(out))
 	t.Logf("MEASURE AC3G file stderr: %s", strings.TrimSpace(errOut))
-	t.Logf("MEASURE AC3G file exit=%d err=%v", code, err)
+	t.Logf("MEASURE AC3G file exit=%d err=%v stub_contacted=%s", code, err, field(out, "stub_contacted"))
 
 	if err == nil && code == 0 && strings.Contains(out, "REFRESH_OK") {
 		t.Fatalf("AC3G file: UNEXPECTEDLY succeeded — rename did not fail EBUSY")
@@ -102,13 +109,21 @@ func TestAC3GFileMountRefreshScript(t *testing.T) {
 	if !strings.Contains(combined, "busy") {
 		t.Fatalf("AC3G file: expected EBUSY on file-mount rename, got exit=%d out=%q stderr=%q", code, out, errOut)
 	}
+	if !strings.Contains(out, "PREFLIGHT_RENAME_FAILED") {
+		t.Fatalf("AC3G file: expected probe abort (PREFLIGHT_RENAME_FAILED), got out=%q", out)
+	}
+	if field(out, "stub_contacted") != "false" {
+		t.Fatalf("AC3G file: stub_contacted=%q (want false) — probe did not abort before POST", field(out, "stub_contacted"))
+	}
 
 	hostBytes, err := os.ReadFile(credFile)
 	if err != nil {
-		t.Fatalf("read host file: %v", err)
+		t.Fatalf("read host file after rename attempt: %v", err)
 	}
-	if strings.Contains(string(hostBytes), "s16g-tok-B-file") {
+	hostContents := string(hostBytes)
+
+	if strings.Contains(hostContents, "s16g-tok-B-file") {
 		t.Fatalf("AC3G file: host file was updated — rename succeeded unexpectedly")
 	}
-	t.Logf("MEASURE AC3G file: rename_failed=true host_unchanged=true exit=%d", code)
+	t.Logf("MEASURE AC3G file: probe_aborted=true stub_contacted=false rename_failed=true host_unchanged=true exit=%d", code)
 }

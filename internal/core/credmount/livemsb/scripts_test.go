@@ -31,11 +31,9 @@ func guestRefreshScript(tokenEndpoint, clientID, credPath string) string {
 	return fmt.Sprintf(`set -eu
 REFRESH_TOKEN=$(sed -n 's/.*"refreshToken"[^"]*"\([^"]*\)".*/\1/p' %s)
 if [ -z "$REFRESH_TOKEN" ]; then echo "REFRESH_TOKEN_EMPTY"; exit 1; fi
-PROBE_DIR=$(dirname %s)
-PROBE_TMP="$PROBE_DIR/.creds-probe-$$.tmp"
-PROBE_SNT="$PROBE_DIR/.creds-probe-$$.snt"
-if ! { printf 'probe' > "$PROBE_TMP" && mv "$PROBE_TMP" "$PROBE_SNT" && rm -f "$PROBE_SNT"; }; then
-  rm -f "$PROBE_TMP" "$PROBE_SNT"
+PROBE_TMP=$(dirname %s)/.creds-probe-$$.tmp
+if ! { cp %s "$PROBE_TMP" && mv "$PROBE_TMP" %s; }; then
+  rm -f "$PROBE_TMP" || true
   echo "PREFLIGHT_RENAME_FAILED"
   exit 1
 fi
@@ -60,7 +58,7 @@ TMPF=$(dirname %s)/.creds-tmp-$$.json
 printf '%%s' "$UPDATED" > "$TMPF"
 mv "$TMPF" %s
 echo "REFRESH_OK new_access_digest=$(printf '%%s' "$NEW_ACCESS" | sha256sum | cut -d' ' -f1)"`,
-		credPath, credPath, tokenEndpoint, clientID, credPath, credPath, credPath)
+		credPath, credPath, credPath, credPath, tokenEndpoint, clientID, credPath, credPath, credPath)
 }
 
 func TestAC4ProbeAbortsBeforePost(t *testing.T) {
