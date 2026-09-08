@@ -13,6 +13,12 @@ title = "Microsandbox guest shell"
 placement = "tab"
 command = ["sh", "plugins/herdr/bin/pane.sh", "shell"]
 
+[[panes]]
+id = "notify"
+title = "Microsandbox notification"
+placement = "overlay"
+command = ["sh", "-c", "printf '%s\\n%s\\n' \"$HERDR_NOTIFY_TITLE\" \"$HERDR_NOTIFY_BODY\"; read -r _"]
+
 [[actions]]
 id = "sandbox-list"
 title = "List Sandboxes"
@@ -31,6 +37,20 @@ platforms = ["linux"]
 id = "ports-status"
 title = "Port Forward Status"
 command = ["herdr-plugin-msb", "status"]
+contexts = ["workspace"]
+platforms = ["linux"]
+
+[[actions]]
+id = "space-open-pane"
+title = "Open Guest Shell Pane"
+command = ["herdr-plugin-msb", "space-open-pane"]
+contexts = ["workspace"]
+platforms = ["linux"]
+
+[[actions]]
+id = "new-tab"
+title = "New Tab (guest pane in msb spaces, host tab elsewhere)"
+command = ["herdr-plugin-msb", "new-tab"]
 contexts = ["workspace"]
 platforms = ["linux"]
 

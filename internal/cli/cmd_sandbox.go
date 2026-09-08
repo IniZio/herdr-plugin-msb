@@ -232,6 +232,9 @@ func runStop(ctx context.Context, args []string, out, errW io.Writer) int {
 		return 1
 	}
 	fmt.Fprintf(out, "stopped %s status=%s\n", ref.Name, ref.Status)
+	if dir, dirErr := StateDir(os.Getenv); dirErr == nil {
+		spaceCleanup(ctx, dir, *project, name, false)
+	}
 	return 0
 }
 
@@ -257,6 +260,9 @@ func runRM(ctx context.Context, args []string, out, errW io.Writer) int {
 		return 1
 	}
 	fmt.Fprintf(out, "removed %s\n", name)
+	if dir, dirErr := StateDir(os.Getenv); dirErr == nil {
+		spaceCleanup(ctx, dir, *project, name, true)
+	}
 	return 0
 }
 

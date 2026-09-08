@@ -259,6 +259,7 @@ func PaneOpenArgv(herdrBin, title string, body []string) []string {
 	return []string{
 		herdrBin, "plugin", "pane", "open",
 		"--plugin", PluginID,
+		"--entrypoint", "notify",
 		"--env", "HERDR_NOTIFY_TITLE=" + title,
 		"--env", "HERDR_NOTIFY_BODY=" + strings.Join(body, "\n"),
 	}
