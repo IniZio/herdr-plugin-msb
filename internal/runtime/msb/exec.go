@@ -2,6 +2,7 @@ package msb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -33,6 +34,9 @@ func (r *Runtime) RunEphemeral(ctx context.Context, spec coreruntime.SandboxSpec
 	sb, err := msbsdk.CreateSandbox(ctx, name, opts...)
 	if err != nil {
 		return coreruntime.ExecResult{}, fmt.Errorf("msb: run-ephemeral create %q: %w", name, err)
+	}
+	if perr := assertNetworkPolicyByName(ctx, name); perr != nil {
+		return coreruntime.ExecResult{}, errors.Join(perr, sb.Destroy(ctx))
 	}
 	var result coreruntime.ExecResult
 	result, err = streamExec(ctx, sb, req)

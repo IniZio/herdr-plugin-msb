@@ -99,9 +99,7 @@ func SandboxOptions(spec coreruntime.SandboxSpec) []msbsdk.SandboxOption {
 		}
 		opts = append(opts, msbsdk.WithMounts(mounts))
 	}
-	if net := networkConfig(spec.NetRules); net != nil {
-		opts = append(opts, msbsdk.WithNetwork(net))
-	}
+	opts = append(opts, msbsdk.WithNetwork(networkConfig(spec.NetRules)))
 	if spec.RemoveOnExit {
 		opts = append(opts, msbsdk.WithEphemeral(true))
 	}
@@ -110,7 +108,7 @@ func SandboxOptions(spec coreruntime.SandboxSpec) []msbsdk.SandboxOption {
 
 func networkConfig(rules []coreruntime.NetRule) *msbsdk.NetworkConfig {
 	if len(rules) == 0 {
-		return nil
+		rules = netprofile.Shipped()
 	}
 	net := &msbsdk.NetworkConfig{DefaultEgress: msbsdk.PolicyActionDeny}
 	net.Rules = append(net.Rules, msbsdk.Rule.AllowDNS())
@@ -179,15 +177,7 @@ func (r *Runtime) Create(ctx context.Context, spec coreruntime.SandboxSpec) (cor
 	return refFromHandle(fresh), nil
 }
 
-func withDefaultNetProfile(spec coreruntime.SandboxSpec) coreruntime.SandboxSpec {
-	if len(spec.NetRules) == 0 {
-		netprofile.Apply(&spec)
-	}
-	return spec
-}
-
 func (r *Runtime) CreateAndBoot(ctx context.Context, spec coreruntime.SandboxSpec) (coreruntime.SandboxRef, error) {
-	spec = withDefaultNetProfile(spec)
 	name := SDKName(spec.Project, spec.Name)
 	if name == "" {
 		return coreruntime.SandboxRef{}, fmt.Errorf("msb: spec has no name")
@@ -203,6 +193,9 @@ func (r *Runtime) CreateAndBoot(ctx context.Context, spec coreruntime.SandboxSpe
 	h, err := msbsdk.GetSandbox(ctx, name)
 	if err != nil {
 		return coreruntime.SandboxRef{}, fmt.Errorf("msb: get sandbox %q after create: %w", name, err)
+	}
+	if perr := assertNetworkPolicy(ctx, h); perr != nil {
+		return coreruntime.SandboxRef{}, errors.Join(perr, teardownHandle(ctx, h))
 	}
 	return refFromHandle(h), nil
 }
