@@ -49,7 +49,16 @@ installable and drivable in that configuration.
   `herdr plugin action invoke` or a `[[link_handlers]]` match, and no action
   requires a keybinding to reach. Any action that must reach the operator does so
   via `herdr plugin pane open`, since action stdout and stderr are pipes.
-- **Verification**: unverified — no test exists. Target method: automated live.
+- **Verification**: verified — manual-live, 2026-09-08, by s10c-herdr-remote-attach.
+  Method: laptop (macOS, 100.64.0.35) ran
+  `/Users/newman/.local/bin/herdr --remote newman@100.64.0.156 --session default`
+  in a tmux session; all three declared actions invoked via
+  `herdr plugin action invoke` on the server while the attach was live —
+  exit\_code 0 for each. No automated test exists; an automated test is a
+  remaining gap. Caveat: the CLI invocations originated from the server's own
+  shell, not from a pane inside the remote TUI — both paths use the same server
+  socket, so the verification is sound, but pane-origin invocation has not been
+  separately confirmed.
 - **Criticality**: must
 - **Confidence caveat, carried deliberately** — Every ABI fact this node rests
   on (`herdr-plugin.toml` manifest keys, the remote-execution claim, the
