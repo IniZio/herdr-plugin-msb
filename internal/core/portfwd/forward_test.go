@@ -2,12 +2,14 @@ package portfwd
 
 import (
 	"context"
+	"fmt"
 	"testing"
 )
 
 type runResp struct {
 	stdout, stderr string
 	code           int
+	err            error
 }
 
 func seqRun(capture *[][]string, resps []runResp) Runner {
@@ -19,7 +21,7 @@ func seqRun(capture *[][]string, resps []runResp) Runner {
 		if i < len(resps) {
 			r := resps[i]
 			i++
-			return r.stdout, r.stderr, r.code, nil
+			return r.stdout, r.stderr, r.code, r.err
 		}
 		return "", "", 0, nil
 	}
@@ -203,5 +205,73 @@ func TestPresentPrefixNonMatch(t *testing.T) {
 func TestPresentSuffixNonMatch(t *testing.T) {
 	if portInOutput("tcp LISTEN [::1]:454560 *:*", 45456) {
 		t.Fatal("port 45456 must not match :454560")
+	}
+}
+
+func TestPresentMacOSListeningTrue(t *testing.T) {
+	line := "tcp4       0      0  127.0.0.1.45455        *.*                    LISTEN"
+	if !portInOutput(line, 45455) {
+		t.Fatal("want true for macOS netstat LISTEN line with matching port")
+	}
+}
+
+func TestPresentMacOSListeningFalse(t *testing.T) {
+	line := "tcp4       0      0  127.0.0.1.45455        *.*                    LISTEN"
+	if portInOutput(line, 45456) {
+		t.Fatal("want false for macOS netstat LISTEN line with non-matching port")
+	}
+}
+
+func TestPresentMacOSEstablished(t *testing.T) {
+	line := "tcp4       0      0  127.0.0.1.45455        203.0.113.1.443        ESTABLISHED"
+	if portInOutput(line, 45455) {
+		t.Fatal("ESTABLISHED line must not count as listener")
+	}
+}
+
+func TestPresentDotSuffixNonMatch(t *testing.T) {
+	if portInOutput("tcp4       0      0  127.0.0.1.454560        *.*                    LISTEN", 45456) {
+		t.Fatal("port 45456 must not match .454560")
+	}
+}
+
+func TestPresentDotPrefixNonMatch(t *testing.T) {
+	if portInOutput("tcp4       0      0  127.0.0.1.45456        *.*                    LISTEN", 4545) {
+		t.Fatal("port 4545 must not match .45456")
+	}
+}
+
+func TestPresentSSFailsFallback(t *testing.T) {
+	macOut := "tcp4       0      0  127.0.0.1.45455        *.*                    LISTEN"
+	f := &Forwarder{
+		ControlPath: testSock,
+		SSHHost:     testHost,
+		Run: seqRun(nil, []runResp{
+			{code: 1},
+			{stdout: macOut, code: 0},
+		}),
+	}
+	ok, err := f.Present(context.Background(), 45455)
+	if err != nil || !ok {
+		t.Fatalf("want true,nil after ss fail + netstat fallback; got %v,%v", ok, err)
+	}
+}
+
+func TestPresentBothUnavailableError(t *testing.T) {
+	probeErr := fmt.Errorf("exec: not found")
+	f := &Forwarder{
+		ControlPath: testSock,
+		SSHHost:     testHost,
+		Run: seqRun(nil, []runResp{
+			{err: probeErr},
+			{err: probeErr},
+		}),
+	}
+	ok, err := f.Present(context.Background(), 80)
+	if err == nil {
+		t.Fatal("want non-nil error when both ss and netstat are unavailable")
+	}
+	if ok {
+		t.Fatal("must not report present when probe failed")
 	}
 }

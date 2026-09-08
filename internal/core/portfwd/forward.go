@@ -108,31 +108,69 @@ func (f *Forwarder) Cancel(ctx context.Context, port uint16) error {
 
 func (f *Forwarder) Present(ctx context.Context, port uint16) (bool, error) {
 	stdout, _, code, err := f.Run(ctx, []string{"ss", "-ltn"})
-	if err != nil {
-		return false, err
+	if err == nil && code == 0 {
+		return portInOutput(stdout, port), nil
 	}
-	if code != 0 {
-		return false, fmt.Errorf("ss -ltn: exit %d", code)
+	ssErr := err
+	if ssErr == nil {
+		ssErr = fmt.Errorf("ss -ltn: exit %d", code)
 	}
-	return portInOutput(stdout, port), nil
+	stdout2, _, code2, err2 := f.Run(ctx, []string{"netstat", "-an", "-p", "tcp"})
+	if err2 == nil && code2 == 0 {
+		return portInOutput(stdout2, port), nil
+	}
+	netErr := err2
+	if netErr == nil {
+		netErr = fmt.Errorf("netstat -an -p tcp: exit %d", code2)
+	}
+	return false, fmt.Errorf("ss: %v; netstat: %v", ssErr, netErr)
 }
 
 func portInOutput(output string, port uint16) bool {
-	needle := fmt.Sprintf(":%d", port)
+	colonNeedle := fmt.Sprintf(":%d", port)
+	dotNeedle := fmt.Sprintf(".%d", port)
 	for _, line := range strings.Split(output, "\n") {
-		start := 0
-		for start < len(line) {
-			idx := strings.Index(line[start:], needle)
-			if idx < 0 {
-				break
-			}
-			abs := start + idx
-			after := abs + len(needle)
-			if after >= len(line) || line[after] < '0' || line[after] > '9' {
-				return true
-			}
-			start = abs + 1
+		if matchDotPort(line, dotNeedle) || matchColonPort(line, colonNeedle) {
+			return true
 		}
+	}
+	return false
+}
+
+func matchColonPort(line, needle string) bool {
+	start := 0
+	for start < len(line) {
+		idx := strings.Index(line[start:], needle)
+		if idx < 0 {
+			break
+		}
+		abs := start + idx
+		after := abs + len(needle)
+		if after >= len(line) || line[after] < '0' || line[after] > '9' {
+			return true
+		}
+		start = abs + 1
+	}
+	return false
+}
+
+func matchDotPort(line, needle string) bool {
+	fields := strings.Fields(line)
+	if len(fields) == 0 || fields[len(fields)-1] != "LISTEN" {
+		return false
+	}
+	start := 0
+	for start < len(line) {
+		idx := strings.Index(line[start:], needle)
+		if idx < 0 {
+			break
+		}
+		abs := start + idx
+		after := abs + len(needle)
+		if after >= len(line) || line[after] < '0' || line[after] > '9' {
+			return true
+		}
+		start = abs + 1
 	}
 	return false
 }

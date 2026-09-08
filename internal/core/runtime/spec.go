@@ -19,6 +19,7 @@ type SandboxSpec struct {
 	RemoveOnExit bool
 	Mounts       []Mount
 	NetRules     []NetRule
+	Ports        []uint16
 }
 
 type SandboxRef struct {

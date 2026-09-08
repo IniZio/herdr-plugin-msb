@@ -99,6 +99,9 @@ func SandboxOptions(spec coreruntime.SandboxSpec) []msbsdk.SandboxOption {
 		}
 		opts = append(opts, msbsdk.WithMounts(mounts))
 	}
+	if len(spec.Ports) > 0 {
+		opts = append(opts, msbsdk.WithPorts(coreruntime.SamePortMap(spec.Ports)))
+	}
 	opts = append(opts, msbsdk.WithNetwork(networkConfig(spec.NetRules)))
 	if spec.RemoveOnExit {
 		opts = append(opts, msbsdk.WithEphemeral(true))
