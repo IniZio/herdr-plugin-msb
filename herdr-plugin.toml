@@ -1,0 +1,35 @@
+id = "herdr-plugin-msb"
+name = "Microsandbox"
+version = "0.1.0"
+min_herdr_version = "0.8.0"
+platforms = ["linux"]
+
+[[build]]
+command = ["make", "build"]
+
+[[actions]]
+id = "sandbox-list"
+title = "List Sandboxes"
+command = ["herdr-plugin-msb", "list"]
+contexts = ["workspace"]
+platforms = ["linux"]
+
+[[actions]]
+id = "ports-declare"
+title = "Declare Guest Ports"
+command = ["herdr-plugin-msb", "declare", "--notify"]
+contexts = ["workspace"]
+platforms = ["linux"]
+
+[[actions]]
+id = "ports-status"
+title = "Port Forward Status"
+command = ["herdr-plugin-msb", "status"]
+contexts = ["workspace"]
+platforms = ["linux"]
+
+[[link_handlers]]
+id = "local-port"
+title = "Local Port"
+pattern = 'http://127\.0\.0\.1:\d+'
+action = "ports-declare"
