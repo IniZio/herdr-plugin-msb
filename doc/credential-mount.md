@@ -5,16 +5,25 @@ comment density at 5 lines per 100 in source files.
 
 ## Mechanism
 
-Claude OAuth credentials are delivered into the microsandbox by mounting the
-host credential file (or its containing directory) into the guest at boot time.
+Claude OAuth credentials are delivered by mounting the host credential
+directory into the guest at boot time. The source is
+`~/.config/nexus3/claude-dedicated/` and the guest path is `/root/.claude`.
+
+It is a directory mount rather than a single-file mount because Claude Code
+writes credentials by writing a sibling temp file and then calling `rename` —
+and `rename` across a single-file bind mount fails `EBUSY`. A directory mount
+survives rename because the directory inode does not change.
+
+Known residual: the mount exposes the entire dedicated store to the guest,
+read-write. Anything running in the guest can read, modify, or corrupt any
+file in that directory.
 
 At the seam (`internal/core/runtime/network.go`) this is `runtime.Mount{HostPath,
 GuestPath, ReadOnly}`, carried on `SandboxSpec.Mounts`. The microsandbox
-implementation resolves it to either `msb --mount-file SRC:DEST` or
-`msb --mount-dir SRC:DEST`, and through the SDK as:
+implementation resolves it through the SDK as:
 
     WithMounts(map[string]MountConfig{
-        dest: Mount.Bind(src, MountOptions{Readonly: true}),
+        dest: Mount.Bind(src, MountOptions{Readonly: false}),
     })
 
 Host-side logic lives in `internal/core/credmount/`. The guest reads the host
@@ -117,7 +126,7 @@ Containment therefore rests entirely on the sandbox network profile. That
 profile is not hardened by default: `--net-default-egress deny` carries an
 implicit `allow@public`, so a default sandbox reaches the public internet.
 The network profile is not containment until it is explicitly tightened, and
-that tightening is the work of a separate slice.
+that tightening is the work of `internal/core/netprofile`.
 
 The blast radius is asserted by a test in the suite, not only by this
 document. A future reader should check the test, not the claim here:
@@ -152,8 +161,8 @@ rejected by the path guard. AC5 is MET.
 **Old store (dead).** `~/.config/nexus3/creds.json`. Flat JSON, snake_case:
 `access_token`, `refresh_token`, `expires_at` (RFC 3339 string), `token_type`,
 `client_id`, `client_secret`, `token_endpoint`. This file's access token is
-revoked and its refresh token is invalid; see the s16-AC6 section below for
-how that happened.
+revoked and its refresh token is invalid; see the credential store destruction
+section below for how that happened.
 
 **New store (live).** `~/.config/nexus3/claude-dedicated/.credentials.json`,
 mode 0600. One top-level key `claudeAiOauth` containing camelCase fields:
@@ -219,7 +228,7 @@ the box.
 
 The suite is `internal/core/credmount/livemsb/credmount_live_test.go`, run as
 `HERDR_MSB_LIVE=1 make test GOTEST_P=1 GOTEST_PARALLEL=1 GOTEST_ARGS='-tags
-live -v -timeout 25m -run TestAC'`. It boots one `s16-`-prefixed alpine guest
+live -v -timeout 25m -run TestAC'`. It boots one alpine guest
 at 1024 MiB with `~/.config/nexus3/creds.json` bind-mounted as a single file,
 installs `curl` in the guest, and reads the token out of the mount inside the
 guest at call time — never through an environment variable or a command line.
@@ -270,7 +279,7 @@ No `auth login` flow is run here. A device-login reuse rotates the OAuth
 credentials and logs the operator out of their session. The credential file
 this project reads is obtained and renewed outside this project's scope.
 
-## s16-AC3 — write direction, measured 2026-09-07T19:21Z
+## Write direction, measured 2026-09-07T19:21Z
 
 `TestGuestWriteDirection` in `internal/core/credmount/livemsb/contention_live_test.go`
 boots one 512 MiB alpine guest with a working copy of the store bind-mounted at
@@ -287,7 +296,7 @@ A guest-side refresh writer is therefore possible, and a guest that writes the
 file also has the power to corrupt the operator's credential store. That widens
 the blast radius recorded above from read to read-write.
 
-**Correction (s18).** This paragraph previously claimed the read-only
+**Correction.** This paragraph previously claimed the read-only
 alternative was "not expressible", inferred from `msb create --help` not listing
 an `ro` option. That inference was wrong — the help text says OPTIONS "may
 include" `quota=` and `uid=/gid=`, which is non-exhaustive. Read-only mounts are
@@ -297,7 +306,7 @@ rather than a backend limitation. See `doc/readonly-mounts.md`, which carries
 the evidence, the recommendation on whether the credential store should ship
 mounted `ro`, and the refresh-propagation coupling that choice creates.
 
-## s16-AC6 — BLOCKED, and the credential store was destroyed measuring it
+## BLOCKED — credential store destroyed during measurement
 
 `TestConcurrentMountContention` boots two 1024 MiB guests on the same
 single-file mount and then refreshes on the host before letting either guest
@@ -308,7 +317,7 @@ guests read the same mount, but a contention finding without a completed
 refresh is vacuous.
 
 The measurable half, taken by hand with the same mount and no refresh: two
-sandboxes (`s16-manual-a`, `s16-manual-b`) both read the token out of one shared
+sandboxes (`manual-a`, `manual-b`) both read the token out of one shared
 mount and both got the identical HTTP status. Sharing one file across two
 guests is not itself the failure mode.
 
@@ -384,10 +393,10 @@ stable. The test writes to a copy, never the live store.
 
 **AC4 — MET (unchanged).** The guest's default (root) process reads the live
 token in full; a non-root guest user is denied by the preserved host file mode.
-The mount is read-write by operator decision (D-15), not by backend limitation:
+The mount is read-write by operator decision, not by backend limitation:
 a read-only store cannot accept an in-guest refresh, which would make host-side
 propagation load-bearing while AC2 remains unproven. The earlier claim that
-`ReadOnly` was silently ignored on `--mount-file` is RETRACTED — see the s18
+`ReadOnly` was silently ignored on `--mount-file` is RETRACTED — see the
 correction above. `ReadOnly` is expressible and live-proven; the defect was
 `livemsb/harness.go` discarding `BindMount.ReadOnly`, which meant every
 credential-mount measurement taken through that harness ran read-write

@@ -58,12 +58,10 @@ inspected nothing and exited 0.
 It was caught by running the negative case against the real `make vet`, not by
 the test suite. `tools/importban/relroot_test.go` now regresses it, and that
 test has been observed failing against the unfixed checker. This is why the
-acceptance criterion for this slice demanded a demonstrated failure rather than
-a demonstrated pass.
+the requirement demanded a demonstrated failure rather than a demonstrated pass.
 
 ## The checker can fail
 
-Both rules have been observed failing. See the slice report for the verbatim
-`make vet` output of each negative case, and `tools/importban/checker_test.go`
+Both rules have been observed failing. `tools/importban/checker_test.go`
 for the unit cases, which cover a clean tree, both violations, the permitted
 SDK import site, and a runtime import from outside `internal/core/`.

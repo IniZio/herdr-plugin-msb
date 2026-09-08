@@ -2,7 +2,7 @@
 
 ## The claim that was wrong
 
-`doc/credential-mount.md` recorded, at s16-AC3, that "the read-only alternative
+`doc/credential-mount.md` recorded that "the read-only alternative
 is not expressible". That was inferred from `msb create --help` not listing an
 `ro` option. The help text says OPTIONS *"may include"* `quota=` and
 `uid=/gid=` — a non-exhaustive phrase, not a closed set. Read-only mounts are
@@ -86,7 +86,7 @@ sits on the `ro` side in a place that is currently unproven.
 
 **Mounting `ro` buys** removal of guest write access to the operator's live
 Claude credential. Today a guest can not only read that token but corrupt it:
-a peer slice measured `echo SENTINEL > /mnt/creds.json` exiting 0, with the
+prior measurement showed `echo SENTINEL > /mnt/creds.json` exiting 0, with the
 host bytes changed and the inode unchanged. `ro` closes that.
 
 **Mounting `ro` costs** the guest's ability to write a refreshed token back.
@@ -96,7 +96,7 @@ has no other way to obtain a token after the mounted one expires.
 
 **That propagation is currently unproven.** The mid-session refresh half of the
 credential bet was never measured: the credential died before any successful
-refresh reached a running guest (`doc/credential-mount.md`, s16-AC6). So `ro`
+refresh reached a running guest (see `doc/credential-mount.md`, the blocked refresh section). So `ro`
 would be trading a measured write-corruption exposure for a dependency on an
 unmeasured mechanism.
 
@@ -109,4 +109,4 @@ Two coherent positions follow:
    prove host-side refresh propagation reaches a running guest, and flip to
    `ro` as the last step — at which point the flip costs nothing.
 
-The mechanism is now available either way; this slice does not pick.
+The mechanism is now available either way; this document does not pick.

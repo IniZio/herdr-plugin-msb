@@ -6,15 +6,15 @@ because this repo caps comment density at 5 comment lines per 100 in source file
 
 ## Why this is a security control, not a convenience
 
-Decision D-12 replaced the CONNECT-proxy credential broker with a live volume
-mount of the host credential store. The previous design swapped a placeholder for
-the real token per request, so the real credential never entered the sandbox. That
-is gone. The operator's real Claude OAuth token now sits inside the guest,
+The CONNECT-proxy credential broker was replaced by a live volume mount of the
+host credential store. The previous design swapped a placeholder for the real
+token per request, so the real credential never entered the sandbox. That is
+gone. The operator's real Claude OAuth token now sits inside the guest,
 readable by anything running there.
 
 The network profile is therefore the only thing between a compromised in-guest
-agent and exfiltration of a live credential. It was defence-in-depth before D-12;
-it is now the whole defence.
+agent and exfiltration of a live credential. It was defence-in-depth before that
+change; it is now the whole defence.
 
 ## An empty rule set is an OPEN policy
 
@@ -35,7 +35,7 @@ Measured on microsandbox 0.6.17, default sandbox, no network flags:
 | private group | `192.168.0.103:54273` (RFC1918 LAN) | blocked, exit 1 (connection refused) |
 
 So the `host` and `private` groups are closed by default, but `public` is open.
-That is the exposure D-12 turned into a credential-exfiltration path.
+That is the exposure the credential delivery change turned into a credential-exfiltration path.
 
 Consequently this package treats an empty allowlist as a programming error rather
 than as "no policy": `Rules` returns `ErrEmptyConfig` for a zero `Config`, and
@@ -83,7 +83,7 @@ The minimal correct flag set is therefore:
 function that emits rules, and `Rules` accepts any `Config`. The allowlist is data
 the operator can change; no call site hardcodes a hostname, and a test can assert
 on `DefaultConfig` independently of the emit logic. `api.anthropic.com` on port 443
-is in the shipped table because a peer slice needs the guest to reach the Claude API.
+is in the shipped table because the product requires the guest to reach the Claude API.
 
 `Shipped()` names the one profile the product actually applies, and `Apply` stamps
 it onto a `SandboxSpec`. Both exist so a test can assert on the shipped policy as a
@@ -104,12 +104,26 @@ present, so the trailing deny was redundant, and because explicit rules take
 precedence over profiles it risked shadowing the allow rule depending on evaluation
 order.
 
-## Unproven, and deliberately not claimed
+## SDK/CLI equivalence — proven
 
-Every reachability result above was measured through the `msb` **CLI**. The product
-ships through the **Go SDK** (`msbsdk.NetworkConfig{DefaultEgress: PolicyActionDeny}`
-plus per-rule `PolicyRule` entries). The finding that `--net-rule` alone does not
-collapse the implicit `allow@public` proves that microsandbox's documented default
-and its effective behaviour can diverge, so SDK/CLI equivalence must not be assumed
-either. A live test that boots a sandbox through `internal/runtime/msb` with
-`netprofile.Shipped()` and re-runs the negative and positive cases is still owed.
+The measurements above used the `msb` **CLI** directly. The product ships through
+the **Go SDK** (`msbsdk.NetworkConfig{DefaultEgress: PolicyActionDeny}` plus
+per-rule `PolicyRule` entries). SDK/CLI equivalence was not assumed: live
+acceptance testing booted sandboxes through `internal/runtime/msb` with
+`netprofile.Shipped()` and reproduced two-outcome egress containment:
+`8.8.8.8:443` blocked (exit 1), `api.anthropic.com:443` allowed (exit 0).
+The product path and the CLI measurements are confirmed equivalent for the
+shipped profile.
+
+## Host privilege requirement
+
+microsandbox requires read-write access to `/dev/kvm` and offers no rootless
+path. The runtime virtualises guests through libkrun, which uses the KVM
+accelerator directly. There is no user-namespace-based isolation and no gvisor
+netstack over a TAP file descriptor.
+
+The previous product used a rootless-userns model with gvisor netstack, which
+provided zero-networking-privilege: a guest escape reached only the network
+namespace granted at start time. That property is not present here. Containment
+rests on the sandbox network profile described above, not on host privilege
+separation.

@@ -43,7 +43,7 @@ them. No streaming machinery is defined at the seam.
 
 ## Deliberately absent: rootfs path, memory size, nested virtualisation
 
-Per decision D-9, three fields the predecessor's sandbox surface advertised —
+Three fields the predecessor's sandbox surface advertised —
 `rootfs_path`, `memory_mib`, `nested_virt` — are dropped, and they appear
 nowhere in this package in any spelling. All three are substrate detail that
 leaked outward: a caller that names a rootfs image path has already committed
@@ -52,7 +52,7 @@ added back. A backing runtime that needs any of them derives it inside its own
 package.
 
 That asymmetry is now settled, and the settlement narrows the paragraph above.
-Decision D-9 constrains what the **MCP surface advertises** — `rootfs_path`,
+The same constraint applies to what the **MCP surface advertises** — `rootfs_path`,
 `memory_mib` and `nested_virt` stay out of the MCP schema — not what the seam
 may express. Keeping a CPU count while dropping a memory size was not a
 principle, so `MemoryMiB` sits alongside `VCPUs` here. Both are applied by the
@@ -64,7 +64,7 @@ spelling.
 
 ## Deleted: `ProxyEndpoint`
 
-Decision D-12 removed the CONNECT-proxy credential design entirely; credentials
+The CONNECT-proxy credential design was removed entirely; credentials
 now reach a guest by volume mount. `ProxyEndpoint` therefore had no referent,
 and a type nobody can populate is a trap for the next reader, so it is gone.
 `internal/core/runtime`'s absence test fails if the identifier reappears.
