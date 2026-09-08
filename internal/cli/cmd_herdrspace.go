@@ -200,7 +200,8 @@ func runNewTab(ctx context.Context, args []string, out, errW io.Writer) int {
 	}
 
 	if !errors.Is(lookupErr, herdrspace.ErrNotFound) {
-		fmt.Fprintln(errW, "new-tab: binding lookup:", lookupErr, "— falling back to host tab")
+		fmt.Fprintln(errW, "new-tab: binding lookup:", lookupErr)
+		return 1
 	}
 
 	bin := herdrBin()
@@ -215,6 +216,9 @@ func runNewTab(ctx context.Context, args []string, out, errW io.Writer) int {
 }
 
 func spaceCleanup(ctx context.Context, dir, project, name string, closeWorkspace bool) {
+	if !closeWorkspace {
+		return
+	}
 	handle := sandboxHandle(project, name)
 	b, err := herdrspace.GetByHandle(ctx, dir, handle)
 	if errors.Is(err, herdrspace.ErrNotFound) {
@@ -224,7 +228,5 @@ func spaceCleanup(ctx context.Context, dir, project, name string, closeWorkspace
 		return
 	}
 	_ = herdrspace.Delete(ctx, dir, b.SpaceLabel)
-	if closeWorkspace {
-		_ = herdrWorkspaceClose(ctx, herdrBin(), b.HerdrWorkspaceID)
-	}
+	_ = herdrWorkspaceClose(ctx, herdrBin(), b.HerdrWorkspaceID)
 }
