@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# s10-acceptance-live-loop: proves AC1-AC7 for herdr-plugin-msb
+# s10-acceptance-live-loop: proves AC1-AC5, AC7 for herdr-plugin-msb (no AC6 section)
 # Env: HERDR_MSB_LIVE_LAPTOP (default newman@100.64.0.35), HERDR_MSB_LIVE_ENGINE (default 100.64.0.156)
 # Needs: msb daemon running, ssh to laptop, credential at ~/.config/nexus3/claude-dedicated/
 set -euo pipefail
@@ -27,6 +27,20 @@ gx() {
 
 laptop_run() {
     ssh -o BatchMode=yes -o ConnectTimeout=10 "$LAPTOP" "bash -lc $(printf '%q' "$1")"
+}
+
+# api_bounded: run API_SCRIPT in sandbox $1 (label $2), retry up to 4 attempts on 429, 30s backoff.
+api_bounded() {
+    local sandbox=$1 label=$2
+    local out="" status="" attempt
+    for attempt in 1 2 3 4; do
+        out=$(gx "$sandbox" sh -c "$API_SCRIPT")
+        status=$(echo "$out" | grep '^status=' | cut -d= -f2)
+        log "MEASURE $label attempt=$attempt status=$status"
+        [ "$status" != "429" ] && break
+        [ "$attempt" -lt 4 ] && { log "$label: 429 — sleep 30s"; sleep 30; }
+    done
+    printf '%s\n' "$out"
 }
 
 cleanup() {
@@ -84,19 +98,12 @@ echo "$CRED_STAT" | grep -q "MISSING" && fail "credential directory mount missin
 log "dir mount OK"
 
 log "=== AC1 ==="
-API1_OUT=$(gx "$ITER1" sh -c "$API_SCRIPT")
-log "MEASURE AC1:"; echo "$API1_OUT"
+API1_OUT=$(api_bounded "$ITER1" "AC1")
+log "MEASURE AC1 full output:"; printf '%s\n' "$API1_OUT" >&2
 AC1_STATUS=$(echo "$API1_OUT" | grep '^status=' | cut -d= -f2)
 AC1_TOKDIG=$(echo "$API1_OUT" | grep '^tokendigest=' | cut -d= -f2 || echo "")
-if [ "$AC1_STATUS" = "429" ]; then
-    log "AC1: 429 — sleep 30s retry"
-    sleep 30
-    API1_OUT=$(gx "$ITER1" sh -c "$API_SCRIPT")
-    log "MEASURE AC1 retry:"; echo "$API1_OUT"
-    AC1_STATUS=$(echo "$API1_OUT" | grep '^status=' | cut -d= -f2)
-    AC1_TOKDIG=$(echo "$API1_OUT" | grep '^tokendigest=' | cut -d= -f2 || echo "")
-fi
-log "AC1 status=$AC1_STATUS tokdig=${AC1_TOKDIG:0:12}"
+[ "$AC1_STATUS" != "200" ] && fail "AC1: API status=$AC1_STATUS after 4 attempts"
+log "AC1 PASS status=$AC1_STATUS tokdig=${AC1_TOKDIG:0:12}"
 
 log "=== AC3 TWO-OUTCOME ==="
 BLOCKED_CODE=0
@@ -107,7 +114,7 @@ log "AC3-BLOCKED PASS"
 ALLOWED_CODE=0
 gx "$ITER1" sh -c "nc -w5 api.anthropic.com 443 </dev/null" || ALLOWED_CODE=$?
 log "MEASURE AC3-ALLOWED: nc api.anthropic.com:443 exit=$ALLOWED_CODE (want 0)"
-[ "$ALLOWED_CODE" -ne 0 ] && log "AC3-ALLOWED FINDING: exit=$ALLOWED_CODE" || log "AC3-ALLOWED PASS"
+[ "$ALLOWED_CODE" -ne 0 ] && fail "AC3-ALLOWED: api.anthropic.com:443 not reachable exit=$ALLOWED_CODE" || log "AC3-ALLOWED PASS"
 
 log "=== AC4 TWO-OUTCOME ==="
 MARKER1="s10m1$(date +%s)"
@@ -131,7 +138,8 @@ LAP_BODY=$(laptop_run \
     "for i in 1 2 3 4 5; do out=\$(curl -sS --max-time 5 http://127.0.0.1:$PORTSTR/) && [ -n \"\$out\" ] && printf '%s' \"\$out\" && break; sleep 1; done" \
     2>/dev/null) || true
 log "MEASURE AC4-POSITIVE: laptop body=${LAP_BODY:0:80}"
-echo "$LAP_BODY" | grep -q "$MARKER1" && log "AC4-POSITIVE PASS" || log "AC4-POSITIVE FINDING: marker not in body"
+echo "$LAP_BODY" | grep -q "$MARKER1" || fail "AC4-POSITIVE: marker not in laptop body — port publish unconfirmed"
+log "AC4-POSITIVE PASS"
 
 log "=== AC2 ==="
 GUEST_D1=$(gx "$ITER1" sh -c "$TOKEN_DIGEST_SCRIPT" 2>/dev/null || echo "")
@@ -144,6 +152,9 @@ SNAP_SHA=$(sha256sum "$SCRATCH/ac2-real.json" | awk '{print $1}')
 log "AC2: snapshot verified sha256=$SNAP_SHA"
 
 SENTINEL="s10-ac2-sentinel-$(date +%s)"
+SENTINEL_DIGEST=$(printf '%s' "$SENTINEL" | sha256sum | cut -d' ' -f1)
+log "AC2: expected sentinel digest=${SENTINEL_DIGEST:0:12}"
+
 python3 -c "
 import json, sys
 with open('$SCRATCH/ac2-real.json') as f:
@@ -159,8 +170,9 @@ sleep 1
 
 GUEST_D2=$(gx "$ITER1" sh -c "$TOKEN_DIGEST_SCRIPT" 2>/dev/null || echo "")
 log "MEASURE AC2 D2=${GUEST_D2:0:12}"
-[ "$GUEST_D1" = "$GUEST_D2" ] && fail "AC2 UNMET: guest still reads D1 after sentinel write — propagation not observed"
-log "AC2: D2 != D1 — sentinel propagated to guest PASS"
+[ -z "$GUEST_D2" ] && fail "AC2: guest exec failed reading sentinel digest — mount lost or exec error"
+[ "$GUEST_D2" != "$SENTINEL_DIGEST" ] && fail "AC2 UNMET: guest D2=${GUEST_D2:0:12} != expected sentinel digest ${SENTINEL_DIGEST:0:12} — propagation not observed"
+log "AC2: D2 == sentinel_digest — sentinel propagated to guest PASS"
 
 cat "$SCRATCH/ac2-real.json" > "$CRED_FILE"
 AC2_SENTINEL_ACTIVE=0
@@ -172,17 +184,10 @@ log "MEASURE AC2 D3=${GUEST_D3:0:12}"
 [ "$GUEST_D1" != "$GUEST_D3" ] && fail "AC2 UNMET: guest digest after restore D3 != D1"
 log "AC2: D3 == D1 — restore confirmed PASS"
 
-AC2_API_OUT=$(gx "$ITER1" sh -c "$API_SCRIPT")
-log "MEASURE AC2 post-restore API:"; echo "$AC2_API_OUT"
+AC2_API_OUT=$(api_bounded "$ITER1" "AC2-post-restore")
+log "MEASURE AC2 post-restore API:"; printf '%s\n' "$AC2_API_OUT" >&2
 AC2_STATUS=$(echo "$AC2_API_OUT" | grep '^status=' | cut -d= -f2)
-if [ "$AC2_STATUS" = "429" ]; then
-    log "AC2: 429 — sleep 30s retry"
-    sleep 30
-    AC2_API_OUT=$(gx "$ITER1" sh -c "$API_SCRIPT")
-    log "MEASURE AC2 retry:"; echo "$AC2_API_OUT"
-    AC2_STATUS=$(echo "$AC2_API_OUT" | grep '^status=' | cut -d= -f2)
-fi
-[ "$AC2_STATUS" != "200" ] && fail "AC2 UNMET: post-restore API status=$AC2_STATUS"
+[ "$AC2_STATUS" != "200" ] && fail "AC2 UNMET: post-restore API status=$AC2_STATUS after 4 attempts"
 log "AC2 PASS: post-restore API $AC2_STATUS"
 
 CRED_SHA_POST_AC2=$(sha256sum "$CRED_FILE" | awk '{print $1}')
@@ -197,11 +202,12 @@ sleep 2
 NC_HOST_AFTER=0
 nc -z -w5 127.0.0.1 "$PORTSTR" || NC_HOST_AFTER=$?
 log "MEASURE AC4-AFTER: host nc exit=$NC_HOST_AFTER (want non-zero)"
-[ "$NC_HOST_AFTER" -ne 0 ] && log "AC4-NEGATIVE PASS (host)" || log "AC4-NEGATIVE FINDING: host port still up"
+[ "$NC_HOST_AFTER" -eq 0 ] && fail "AC4-NEGATIVE: host port still up after sandbox remove"
+log "AC4-NEGATIVE PASS (host)"
 LAP_AFTER=$(laptop_run "curl -sS --max-time 5 http://127.0.0.1:$PORTSTR/ 2>&1 || true" 2>/dev/null) || true
 log "MEASURE AC4-AFTER: laptop curl=${LAP_AFTER:0:80}"
 echo "$LAP_AFTER" | grep -q "$MARKER1" \
-    && log "AC4-NEGATIVE FINDING: marker still returned after remove" \
+    && fail "AC4-NEGATIVE: marker still returned after sandbox remove" \
     || log "AC4-NEGATIVE PASS (laptop): marker absent"
 laptop_run "pkill -f 'ssh.*-L $PORTSTR:127.0.0.1:$PORTSTR' 2>/dev/null; true" 2>/dev/null || true
 
@@ -211,20 +217,16 @@ sleep 2
     --cred=true --mem 1024 --vcpus 2
 log "iter2 create exit=0"
 sleep 3
-API2_OUT=$(gx "$ITER2" sh -c "$API_SCRIPT")
-log "MEASURE AC5 API:"; echo "$API2_OUT"
+API2_OUT=$(api_bounded "$ITER2" "AC5")
+log "MEASURE AC5 API full output:"; printf '%s\n' "$API2_OUT" >&2
 AC5_STATUS=$(echo "$API2_OUT" | grep '^status=' | cut -d= -f2)
-if [ "$AC5_STATUS" = "429" ]; then
-    log "AC5: 429 — retry after 30s"
-    sleep 30
-    API2_OUT=$(gx "$ITER2" sh -c "$API_SCRIPT")
-    echo "$API2_OUT"
-    AC5_STATUS=$(echo "$API2_OUT" | grep '^status=' | cut -d= -f2)
-fi
-log "AC5 API status=$AC5_STATUS"
+[ "$AC5_STATUS" != "200" ] && fail "AC5: API status=$AC5_STATUS after 4 attempts"
+log "AC5 API PASS status=$AC5_STATUS"
 BLOCKED2=0
 gx "$ITER2" sh -c "nc -w5 8.8.8.8 443 </dev/null" || BLOCKED2=$?
 log "MEASURE AC5-AC3: nc 8.8.8.8:443 exit=$BLOCKED2 (want non-zero)"
+[ "$BLOCKED2" -eq 0 ] && fail "AC5 DEGENERATE: 8.8.8.8:443 reachable from iter2 — egress containment broken"
+log "AC5-AC3 PASS iter2 egress blocked"
 "$PLUGIN" stop -project herdr "$ITER2" 2>&1
 "$PLUGIN" rm -project herdr "$ITER2" 2>&1
 log "iter2 removed"
@@ -248,6 +250,6 @@ log "AC3-BLOCKED exit=$BLOCKED_CODE  AC3-ALLOWED exit=$ALLOWED_CODE"
 log "AC4-POSITIVE marker=$(echo "$LAP_BODY" | grep -c "$MARKER1" || echo 0)"
 log "AC4-NEGATIVE host=$NC_HOST_AFTER"
 log "AC2 D1=${GUEST_D1:0:12} D2=${GUEST_D2:0:12} D3=${GUEST_D3:0:12} post-restore=$AC2_STATUS"
-log "AC5 status=$AC5_STATUS  AC5-AC3 blocked=$BLOCKED2"
+log "AC5 status=$AC5_STATUS  AC5-AC3 iter2-blocked=$BLOCKED2"
 log "AC7 $FINAL_LIST"
 log "cred sha256=$CRED_SHA_FINAL (unchanged)"
