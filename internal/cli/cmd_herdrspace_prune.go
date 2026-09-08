@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/IniZio/herdr-plugin-msb/internal/core/herdrspace"
+	coreruntime "github.com/IniZio/herdr-plugin-msb/internal/core/runtime"
 	"github.com/IniZio/herdr-plugin-msb/internal/core/service"
 	"github.com/IniZio/herdr-plugin-msb/internal/runtime/msb"
 )
@@ -53,6 +55,25 @@ var pruneStopSandbox = func(ctx context.Context, project, name string) error {
 	return err
 }
 
+var pruneSandboxStatus = func(ctx context.Context, project, name string) (coreruntime.SandboxStatus, error) {
+	ref, err := service.New(msb.New(), project).Resolve(ctx, name)
+	if err != nil {
+		return "", err
+	}
+	return ref.Status, nil
+}
+
+func pruneRunningCheck(ctx context.Context, project, name string) (running bool, err error) {
+	status, statusErr := pruneSandboxStatus(ctx, project, name)
+	if errors.Is(statusErr, service.ErrNotFound) {
+		return false, nil
+	}
+	if statusErr != nil {
+		return false, statusErr
+	}
+	return status == coreruntime.SandboxStatusRunning, nil
+}
+
 func pruneReclaim(ctx context.Context, project, name string) error {
 	err := pruneRemoveSandbox(ctx, project, name)
 	if err == nil {
@@ -70,6 +91,7 @@ func runSpacePrune(ctx context.Context, args []string, out, errW io.Writer) int 
 	apply := fs.Bool("apply", false, "actually reclaim stranded sandboxes")
 	all := fs.Bool("all", false, "permit unscoped --apply sweep (required when --apply without --workspace)")
 	wsFilter := fs.String("workspace", "", "consider only this herdr workspace id")
+	killRunning := fs.Bool("kill-running", false, "permit reclaiming a RUNNING sandbox (destroys any in-flight work inside it)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -113,8 +135,8 @@ func runSpacePrune(ctx context.Context, args []string, out, errW io.Writer) int 
 
 	for _, b := range bindings {
 		considered++
-		reason := pruneStrandReason(live, b)
-		if reason == "workspace-alive" {
+		reason, stranded := pruneStrandReason(live, b)
+		if !stranded {
 			fmt.Fprintf(out, "space-prune: keep %s workspace=%s reason=%s\n", b.SandboxHandle, b.HerdrWorkspaceID, reason)
 			continue
 		}
@@ -124,6 +146,17 @@ func runSpacePrune(ctx context.Context, args []string, out, errW io.Writer) int 
 			continue
 		}
 		hp, hn := splitSandboxHandle(b.SandboxHandle)
+		running, statusErr := pruneRunningCheck(ctx, hp, hn)
+		if statusErr != nil {
+			fmt.Fprintf(errW, "space-prune: refusing %s: cannot determine sandbox status: %v\n", b.SandboxHandle, statusErr)
+			exitErr = true
+			continue
+		}
+		if running && !*killRunning {
+			fmt.Fprintf(errW, "space-prune: refusing to reclaim RUNNING sandbox %s workspace=%s (pass --kill-running to destroy it and any in-flight work)\n", b.SandboxHandle, b.HerdrWorkspaceID)
+			exitErr = true
+			continue
+		}
 		if removeErr := pruneReclaim(ctx, hp, hn); removeErr != nil {
 			fmt.Fprintln(errW, removeErr)
 			exitErr = true
@@ -145,18 +178,23 @@ func runSpacePrune(ctx context.Context, args []string, out, errW io.Writer) int 
 	return 0
 }
 
-func pruneStrandReason(live map[string]string, b herdrspace.Binding) string {
-	checkoutPath, ok := live[b.HerdrWorkspaceID]
-	if !ok {
-		return "workspace-gone"
+func pruneStrandReason(live map[string]string, b herdrspace.Binding) (reason string, stranded bool) {
+	_, workspaceLive := live[b.HerdrWorkspaceID]
+	path := strings.TrimSpace(b.CheckoutPath)
+	if path == "" {
+		return "no-checkout-path-recorded", false
 	}
-	if checkoutPath == "" {
-		return "workspace-alive"
+	_, statErr := os.Stat(path)
+	pathGone := os.IsNotExist(statErr)
+	switch {
+	case !workspaceLive && pathGone:
+		return "workspace-gone+worktree-gone:" + path, true
+	case !workspaceLive:
+		return "workspace-gone-worktree-present:" + path, false
+	case pathGone:
+		return "worktree-gone-workspace-alive:" + path, false
 	}
-	if _, err := os.Stat(checkoutPath); os.IsNotExist(err) {
-		return "worktree-gone:" + checkoutPath
-	}
-	return "workspace-alive"
+	return "workspace-alive", false
 }
 
 func splitSandboxHandle(handle string) (project, name string) {

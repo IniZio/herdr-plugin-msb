@@ -199,6 +199,7 @@ func runSpaceConvert(ctx context.Context, args []string, out, errW io.Writer) in
 		SpaceLabel:       label,
 		HerdrWorkspaceID: *workspaceID,
 		SandboxHandle:    sandboxHandle(*project, name),
+		CheckoutPath:     checkoutPath,
 	}
 	if putErr := herdrspace.Put(ctx, dir, b); putErr != nil {
 		_ = convertRemoveSandbox(ctx, *project, name)

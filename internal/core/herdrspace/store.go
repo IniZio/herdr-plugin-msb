@@ -18,6 +18,7 @@ type Binding struct {
 	SpaceLabel       string `json:"space_label"`
 	HerdrWorkspaceID string `json:"herdr_workspace_id"`
 	SandboxHandle    string `json:"sandbox_handle"`
+	CheckoutPath     string `json:"checkout_path,omitempty"`
 }
 
 // ErrNotFound is returned when no matching binding exists.
