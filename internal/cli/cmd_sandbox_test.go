@@ -153,3 +153,35 @@ func TestUsageVerbs(t *testing.T) {
 		t.Errorf("usage verb count: got %d, want %d; found=%v", len(found), len(expected), found)
 	}
 }
+
+func TestShippedVerbRegistry(t *testing.T) {
+	shippedVerbs := []string{
+		"create", "ps", "exec", "start", "stop", "rm",
+		"version", "declare", "status", "list", "local-agent",
+		"help", "--help", "-h",
+	}
+	declinedVerbs := []string{
+		"shell", "run", "attach", "ssh", "log", "snapshot",
+		"fork", "sandbox", "volume", "image", "cp", "auth",
+		"egress", "ls", "harvest", "orca", "pause", "reap",
+		"recover", "restore", "resume", "mcp", "doctor", "forward",
+		"supervisor-upgrade", "supervisor-backfill-netns-identity",
+	}
+
+	ctx := context.Background()
+	for _, verb := range shippedVerbs {
+		var stdout, stderr bytes.Buffer
+		Run(ctx, []string{verb}, &stdout, &stderr)
+		if strings.Contains(stderr.String(), "unknown command") {
+			t.Errorf("shipped verb %q: unexpected 'unknown command' in stderr: %s", verb, stderr.String())
+		}
+	}
+
+	for _, verb := range declinedVerbs {
+		var stdout, stderr bytes.Buffer
+		Run(ctx, []string{verb}, &stdout, &stderr)
+		if !strings.Contains(stderr.String(), "unknown command") {
+			t.Errorf("declined verb %q: expected 'unknown command' in stderr, got: %s", verb, stderr.String())
+		}
+	}
+}

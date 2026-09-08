@@ -41,10 +41,12 @@ deliberate decline.
 
 ## Declined, by name
 
-The nexus3 CLAUDE.md cites 37 registered verbs. The spec's "Visible verbs" section lists
-35. The remaining 2 are hidden verbs (`__herdr-plugin` and `herdr`, both registered with
-`Hidden: true` for plugin-private use). All 35 visible nexus3 verbs are accounted for
-below.
+**Authoritative count: 37 registered nexus3 verbs — 35 visible + 2 hidden.** The motive
+charter cited 29 in an early estimate (before s06's inventory); that figure is superseded
+by s06's measured result. The nexus3 CLAUDE.md itself cites 37. The spec's "Visible verbs"
+section lists 35. The remaining 2 are hidden verbs (`__herdr-plugin` and `herdr`, both
+registered with `Hidden: true` for plugin-private use). All 35 visible nexus3 verbs are
+accounted for below.
 
 | nexus3 verb | Disposition | Reason |
 |---|---|---|
