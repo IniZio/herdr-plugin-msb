@@ -145,9 +145,9 @@ Against herdr 0.8.0 that jq returns empty. The correct selectors are:
 - removed: `jq -r '.data.workspace_id'`, path via `jq -r '.data.worktree.path'`
 
 Do **not** port those nexus3 comments. Prefer `HERDR_WORKSPACE_ID` where it suffices; it is
-set on every hook invocation (captured above). Whether `HERDR_WORKSPACE_ID` is set for
-`worktree.removed` specifically was **not** captured — s52 must confirm it or use the
-envelope path.
+set on every hook invocation (captured above). `HERDR_WORKSPACE_ID` is also set for
+`worktree.removed` — s52 captured it directly in a real firing (`source=env`); use it in
+preference to the envelope path.
 
 ## A3 — delivery semantics: non-blocking, one-shot, exit code logged
 
@@ -184,18 +184,13 @@ $ herdr plugin log list --plugin s50.probe-fail
 
 ## A4 — `worktree.removed` fires only when herdr drives the removal
 
-**Confirmed as inherited, not re-proven in this slice.** nexus3 recorded the answer in
-`/home/newman/magic/nexus3/plugins/herdr/bin/on-worktree-removed.sh:15-18`:
-"OQ-1 (answered in session): worktree.removed fires ONLY when herdr drives the removal
-(`herdr worktree remove`). A plain `git worktree remove` outside herdr does NOT fire this
-hook." Corroborating, non-conclusive: the binary's only worktree-removal path strings are
-herdr's own verb (`"worktree.remove is handled asynchronously by the app runtime"`,
-`worktree_remove_failed`, `dirty_worktree_requires_force`) and there is no filesystem-watch
-or `git worktree prune` reconciliation string anywhere in it.
+**Directly measured by s52 (HIGH confidence).** Both removal paths were run:
 
-This slice did **not** re-run the negative control (it requires creating and destroying a
-real git worktree). Treat as MEDIUM confidence. **Design consequence stands either way:** a
-prune/reap backstop is required; the hook alone cannot be the only reclamation path.
+- `git worktree remove` (plain) — hook did **not** fire.
+- `herdr worktree remove` — hook fired and exited 0.
+
+**Design consequence stands:** a prune/reap backstop is required; the hook alone cannot be
+the only reclamation path.
 
 ## B — in-place root pane replacement: NOT possible
 
@@ -288,7 +283,7 @@ Never `pane close` first. Never `workspace.create` for a convert.
 | no pane replace API | 90 `properties.method.const` values in the request schema; no `pane.create`/`pane.replace` |
 | split+close keeps tab and workspace | live run on scratch workspace `w8J` |
 | closing last pane destroys workspace | `workspace_not_found` for `w8J` immediately after |
-| `worktree.removed` only on herdr-driven removal | nexus3 `plugins/herdr/bin/on-worktree-removed.sh:15-18` (inherited, MEDIUM) |
+| `worktree.removed` only on herdr-driven removal | s52 ran both paths: plain `git worktree remove` fired no hook; `herdr worktree remove` fired it, exit 0 |
 
 All probe plugins (`s50.probe-*`) were unlinked and all probe workspaces closed; `herdr
 plugin list` and `herdr workspace list` were re-read afterwards to confirm no residue.
@@ -297,7 +292,10 @@ plugin list` and `herdr workspace list` were re-read afterwards to confirm no re
 
 - Behaviour of a hook that hangs (kill? timeout? slot leak?) — not measured.
 - The numeric value of the plugin command concurrency limit.
-- Whether `HERDR_WORKSPACE_ID` is set for `worktree.removed` (the workspace is gone by then);
-  only `workspace.created` was captured.
-- Whether `worktree.removed` fires for a plain `git worktree remove` — inherited from nexus3,
-  not re-proven here.
+
+Resolved by s52, previously listed here:
+
+- `HERDR_WORKSPACE_ID` for `worktree.removed` — it IS set (`source=env`), captured in a real
+  firing.
+- `worktree.removed` on plain `git worktree remove` — plain removal fires NO hook;
+  `herdr worktree remove` fires the hook and exits 0 (both paths run directly).

@@ -17,8 +17,8 @@ deliberate decline.
 | `create` | Create and boot a sandbox; mounts the worktree read-write and the dedicated Claude credential store read-write | The fundamental lifecycle primitive; without it nothing starts |
 | `ps` | List sandboxes from the runtime | Operators need to see what is running; the name follows the nexus3 convention |
 | `exec` | Run a command inside a named sandbox; propagates the guest's exit code | Distinguishing a failing guest command from a CLI error requires the guest exit code; exec is the only general-purpose execution path |
-| `start` | Start a stopped sandbox | Needed to restart a sandbox that was stopped without removing it |
-| `stop` | Stop a running sandbox | Graceful shutdown without destroying state |
+| `start` | Boot the guest again from its image; the herdr workspace binding from `stop` is reused | Needed to restart a sandbox that was stopped without removing it |
+| `stop` | Shut down the guest (VM process exits; in-guest state is lost); the herdr workspace binding survives and is reused by `start` | Operators need to stop a running guest without removing the sandbox |
 | `rm` | Remove a sandbox | Cleanup; without it sandboxes accumulate |
 
 ### Plugin verbs (shipped by an earlier slice)
@@ -89,8 +89,8 @@ accounted for below.
 | `shell` | Declined | An interactive shell requires SSH or a TTY-attach API; neither is available (no SSH server in guests, no attach API in microsandbox v0.6.17); `exec` with an interactive process is the substitute |
 | `snapshot` | Declined | Snapshot creation was marked out-of-scope in the nexus3 spec itself |
 | `ssh` | Declined | No SSH surface in microsandbox guests; the runtime does not install or configure an SSH daemon |
-| `start` | **Adopted** | Name and semantics adopted without change |
-| `stop` | **Adopted** | Name and semantics adopted without change |
+| `start` | **Adopted** | Name adopted; semantics clarified — boots the guest from its image (not resume/unpause) |
+| `stop` | **Adopted** | Name adopted; semantics clarified — tears the guest VM down (in-guest state is lost; the herdr workspace binding survives and is reused by `start`) |
 | `supervisor-backfill-netns-identity` | Declined | No supervisor exists in this repo; additionally the nexus3 spec itself marked this verb out-of-scope ("CH-specific netns identity backfill not applicable to microsandbox") |
 | `supervisor-upgrade` | Declined | No supervisor exists in this repo; there is no detached per-sandbox supervisor process to upgrade |
 | `version` | **Adopted** | Name and semantics adopted; both repos print the binary's own build identity |

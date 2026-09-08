@@ -99,3 +99,12 @@ The refusal cases are proven by injecting committed-memory figures through the `
 interface with a small configured budget in unit tests: one run where `committed + requested`
 stays under the budget, and one where it does not. Booting actual sandboxes to test an OOM guard
 would be precisely the failure the guard exists to prevent.
+
+## Stopped sandboxes and the conservative count
+
+This check counts every daemon-reported sandbox regardless of status, because SDK v0.6.17 offers
+no per-status guarantee. `doc/stop-start.md` records a host-side measurement of what a stopped
+sandbox actually costs: the `libkrun VM` process exits on `stop`, so its guest RAM — 472 MB of
+`RssAnon` in the measured case — is fully returned to the host. A stopped sandbox costs zero host
+RAM, and there is no "paused" case, because the runtime has no pause. The count remains
+conservative by choice; the data is on record so the trade can be revisited deliberately.
