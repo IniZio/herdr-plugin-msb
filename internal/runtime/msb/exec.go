@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	coreruntime "github.com/IniZio/herdr-plugin-msb/internal/core/runtime"
 	msbsdk "github.com/superradcompany/microsandbox/sdk/go"
@@ -18,7 +19,11 @@ func (r *Runtime) Exec(ctx context.Context, ref coreruntime.SandboxRef, req core
 	if err != nil {
 		return coreruntime.ExecResult{}, err
 	}
-	defer func() { _ = sb.Detach(ctx) }()
+	defer func() {
+		dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		_ = sb.Detach(dctx)
+	}()
 	return streamExec(ctx, sb, req)
 }
 
