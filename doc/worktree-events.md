@@ -130,13 +130,17 @@ on the host.
 4. Only `workspace-gone+worktree-gone:<path>` — **both** signals — is stranded. One signal
    alone is reported and kept: `workspace-gone-worktree-present:<path>` and
    `worktree-gone-workspace-alive:<path>`.
-5. A binding with **no** recorded `checkout_path` is always kept, reason
-   `no-checkout-path-recorded`. Corroboration is impossible, so the fail-safe answer is to
-   reclaim nothing. This is deliberate and it covers two populations: bindings written
-   before the field existed, and `space-create` bindings, whose workspace has no worktree
-   at all. Reclaim those by hand (`rm` the sandbox, then drop the binding record) after
-   confirming they are dead. The alternative — treating an absent path as corroboration —
-   is exactly the one-signal behaviour rule 4 exists to forbid.
+5. A binding with **no** recorded `checkout_path` (the `space-create` lifecycle: a
+   workspace with a sandbox but no herdr worktree) uses a different second strand:
+   **sandbox liveness**, read from the msb daemon via the status probe. The four reasons:
+   - `workspace-alive-no-worktree` — kept (workspace still exists).
+   - `workspace-gone-sandbox-running` — kept (workspace gone, but sandbox is RUNNING).
+   - `workspace-gone+sandbox-not-running` — **stranded and reclaimable** (workspace gone
+     AND sandbox stopped, paused, or absent from the daemon).
+   - `sandbox-state-unknown` — kept; the status probe failed, so the verb fails closed and
+     prints the probe error to stderr.
+   Reclaiming now also tolerates a sandbox that the daemon reports as not-found: a dangling
+   binding record whose sandbox already vanished is cleaned up rather than erroring.
 
 
 ### 3.2 `--apply` without `--workspace` requires `--all`
@@ -151,15 +155,22 @@ This is not ceremony. The operator's demo binding (`msb:eyeball` -> `herdr/eyeba
 workspace `w8E`) was classified `would-reclaim ... reason=workspace-gone` under the
 one-signal rule, on a **running** 2 GiB sandbox, so `--apply --workspace w8E` would have
 destroyed it and this refusal was the only thing standing in the way. It is no longer the
-only thing: §3.1 rule 5 and §3.4 are two further independent refusals on that same
-binding. Keep all three. The hook always passes `--workspace`, so the hook path can never
-trigger a sweep.
+only thing: §3.1 rule 5 (sandbox still RUNNING) and §3.4 are two further independent
+refusals on that same binding. Keep all three. The hook always passes `--workspace`, so
+the hook path can never trigger a sweep.
 
 Dry run against the live store after this slice:
 
     $ ./herdr-plugin-msb space-prune
-    space-prune: keep herdr/eyeball workspace=w8E reason=no-checkout-path-recorded
-    space-prune: considered=1 reclaimable=0 applied=0 apply=false
+    space-prune: keep herdr/eyeball workspace=w8E reason=workspace-gone-sandbox-running
+    space-prune: keep herdr/msb-convert-demo workspace=w8T reason=workspace-alive
+    space-prune: considered=2 reclaimable=0 applied=0 apply=false
+
+`herdr/eyeball` records no `checkout_path` and is kept by rule 5 on sandbox liveness;
+`herdr/msb-convert-demo` records one and is kept by rule 4 on the workspace signal. The
+liveness probe is doing real work here: had it failed the reason would read
+`sandbox-state-unknown`, and had the sandbox been stopped it would read `would-reclaim
+... workspace-gone+sandbox-not-running`.
 
 ### 3.3 A stranded sandbox is usually still running
 
@@ -243,12 +254,15 @@ remove` is a deliberate, hand-driven act on that worktree, and destroying the wo
 sandbox is its intended consequence — so the guest's in-flight work is forfeit, without
 confirmation. Read §2 before relying on this.
 
-`--kill-running` on the hook waives the running-status refusal in this section only. It
-does not touch the other two refusals: the two-signal strand rule (§3.1) and the
-`no-checkout-path-recorded` keep (§3.1 rule 5) both still hold, and the hook still always
-scopes to one `--workspace`, so it can never sweep (§3.2). The operator's demo binding
-(`msb:eyeball` -> `herdr/eyeball`, workspace `w8E`) records no checkout path and is
-therefore kept whatever flags are passed.
+`--kill-running` on the hook waives the running-status refusal in this section only for
+**worktree-backed bindings**. For no-worktree bindings (§3.1 rule 5), `--kill-running`
+has no effect: running-ness is the second strand itself, so a RUNNING sandbox is never
+classified as stranded and never reaches the reclaim path regardless of flags. To reclaim
+a no-worktree binding whose sandbox is RUNNING, stop the sandbox first, then re-run
+`space-prune`. The two-signal strand rule (§3.1) still holds in full, and the hook still
+always scopes to one `--workspace`, so it can never sweep (§3.2). The operator's demo
+binding (`msb:eyeball` -> `herdr/eyeball`, workspace `w8E`, no recorded checkout path) is
+kept under `workspace-gone-sandbox-running` — and stays kept even with `--kill-running`.
 
 ### 3.5 The lifecycle, proven end to end
 
@@ -275,7 +289,9 @@ discriminating record is the hook's own events log at
 `rc=0 ... reclaimed herdr/s57probe2` for the positive run against `rc=1 ... refusing to
 reclaim RUNNING sandbox` for the negative. The binding disappeared from
 `herdr-space-bindings.json`, and the operator's `msb:eyeball` binding was `keep
-reason=no-checkout-path-recorded` in the dry run before and after.
+reason=no-checkout-path-recorded` in the dry run before and after. That run predates §3.1
+rule 5; the eyeball binding is still kept today, now under the reason
+`workspace-gone-sandbox-running` — see the re-run captured in §3.2.
 
 `herdr plugin log list` records the hook's **duration** as a second discriminating signal —
 2099 ms for the reclaim against 29 ms for the refusal, and a running microVM cannot be torn
@@ -286,6 +302,23 @@ exited 0 on every path and both the positive run and the negative control record
 control proves nothing. The hook now exits `PRUNE_RC` (§2), so the field discriminates for
 runs taken after that change; a non-zero exit is a diagnostic signal only, since a failing
 hook neither aborts the herdr operation nor is retried (`doc/herdr-event-contract.md`).
+
+The no-worktree lifecycle (§3.1 rule 5) was proven the same way, on a throwaway 1 GiB
+sandbox `herdr--f03probe` bound to `wsF03ABSENT`, an id absent from `herdr workspace list`,
+with no recorded `checkout_path`:
+
+| run | sandbox | argv | output | `msb list` after |
+|---|---|---|---|---|
+| R1 | RUNNING | `space-prune --workspace wsF03ABSENT` | `keep herdr/f03probe ... reason=workspace-gone-sandbox-running` / `reclaimable=0` | present |
+| R2 | RUNNING | `space-prune --apply --workspace wsF03ABSENT --kill-running` | `keep herdr/f03probe ... reason=workspace-gone-sandbox-running` / `applied=0` rc=0 | present |
+| R3 | STOPPED | `space-prune --workspace wsF03ABSENT` | `would-reclaim herdr/f03probe ... reason=workspace-gone+sandbox-not-running` / `reclaimable=1` | present |
+| R4 | STOPPED | `space-prune --apply --workspace wsF03ABSENT` | `reclaimed herdr/f03probe ... reason=workspace-gone+sandbox-not-running` / `applied=1` rc=0 | gone |
+
+R2 and R3 are the discriminating pair: the only thing that changed between them was
+`msb stop herdr--f03probe`. R2 is also the proof of the §3.4 asymmetry — `--kill-running`
+was passed and the sandbox still survived. The binding went from one record to `[]` across
+R4. Throughout, the operator's `msb:eyeball` binding read `keep herdr/eyeball workspace=w8E
+reason=workspace-gone-sandbox-running`.
 
 ### 3.6 A replaced herdr binary broke the hook, and how
 

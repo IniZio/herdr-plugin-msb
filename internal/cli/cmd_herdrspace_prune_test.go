@@ -255,28 +255,99 @@ func TestSpacePrune_TwoSignalsRequired(t *testing.T) {
 	}
 }
 
-func TestSpacePrune_MissingCheckoutPathIsNeverReclaimed(t *testing.T) {
+func TestSpacePrune_NoWorktreeBinding_TwoSignalsRequired(t *testing.T) {
+	cases := []struct {
+		name        string
+		liveHasWS   bool
+		status      coreruntime.SandboxStatus
+		statusErr   error
+		wantReclaim bool
+		wantReason  string
+	}{
+		{"workspace-gone+sandbox-stopped", false, coreruntime.SandboxStatusStopped, nil, true, "workspace-gone+sandbox-not-running"},
+		{"workspace-gone-sandbox-running", false, coreruntime.SandboxStatusRunning, nil, false, "workspace-gone-sandbox-running"},
+		{"workspace-alive", true, coreruntime.SandboxStatusStopped, nil, false, "workspace-alive-no-worktree"},
+		{"status-unknown-fails-closed", false, "", fmt.Errorf("msb daemon unreachable"), false, "sandbox-state-unknown"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := pruneStateDir(t)
+			pruneAddBinding(t, dir, herdrspace.Binding{SpaceLabel: "lbl-" + tc.name, HerdrWorkspaceID: "wsNW", SandboxHandle: "herdr/nw"})
+
+			live := map[string]string{}
+			if tc.liveHasWS {
+				live["wsNW"] = ""
+			}
+			var removeCalls []string
+			stubPruneVars(t, live, nil, &removeCalls, nil)
+			stubPruneStatus(t, tc.status, tc.statusErr, nil)
+
+			var stdout, stderr bytes.Buffer
+			code := runSpacePrune(context.Background(), []string{"--apply", "--workspace", "wsNW"}, &stdout, &stderr)
+			if code != 0 {
+				t.Fatalf("%s: want 0, got %d; stderr=%q", tc.name, code, stderr.String())
+			}
+			if !strings.Contains(stdout.String(), tc.wantReason) {
+				t.Errorf("%s: want reason %q; got %q", tc.name, tc.wantReason, stdout.String())
+			}
+			bs, _ := herdrspace.List(context.Background(), dir)
+			if tc.wantReclaim {
+				if len(removeCalls) != 1 || len(bs) != 0 {
+					t.Errorf("%s: want reclaim; removeCalls=%v bindings=%v", tc.name, removeCalls, bs)
+				}
+				return
+			}
+			if len(removeCalls) != 0 || len(bs) != 1 {
+				t.Errorf("%s: one signal must not reclaim; removeCalls=%v bindings=%v", tc.name, removeCalls, bs)
+			}
+		})
+	}
+}
+
+func TestSpacePrune_NoWorktreeRunningSurvivesKillRunning(t *testing.T) {
 	dir := pruneStateDir(t)
-	pruneAddBinding(t, dir, herdrspace.Binding{SpaceLabel: "lblOld", HerdrWorkspaceID: "wxOld", SandboxHandle: "p/legacy"})
+	pruneAddBinding(t, dir, herdrspace.Binding{SpaceLabel: "eyeball", HerdrWorkspaceID: "w8E", SandboxHandle: "herdr/herdr--eyeball"})
 
 	var removeCalls []string
 	stubPruneVars(t, map[string]string{}, nil, &removeCalls, nil)
+	stubPruneStatus(t, coreruntime.SandboxStatusRunning, nil, nil)
 
 	var stdout, stderr bytes.Buffer
-	code := runSpacePrune(context.Background(), []string{"--apply", "--all"}, &stdout, &stderr)
+	code := runSpacePrune(context.Background(), []string{"--apply", "--workspace", "w8E", "--kill-running"}, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("legacy binding: want 0, got %d; stderr=%q", code, stderr.String())
+		t.Fatalf("eyeball canary: want 0, got %d; stderr=%q", code, stderr.String())
 	}
-	out := stdout.String()
-	if !strings.Contains(out, "keep p/legacy") || !strings.Contains(out, "no-checkout-path-recorded") {
-		t.Errorf("legacy binding: want keep with no-checkout-path-recorded; got %q", out)
+	if !strings.Contains(stdout.String(), "keep herdr/herdr--eyeball") {
+		t.Errorf("eyeball canary: want keep line; got %q", stdout.String())
 	}
 	if len(removeCalls) != 0 {
-		t.Errorf("legacy binding: remove must not be called; got %v", removeCalls)
+		t.Errorf("eyeball canary: remove must not be called even with --kill-running; got %v", removeCalls)
 	}
 	bs, _ := herdrspace.List(context.Background(), dir)
 	if len(bs) != 1 {
-		t.Errorf("legacy binding: binding must survive; got %v", bs)
+		t.Errorf("eyeball canary: binding must survive; got %v", bs)
+	}
+}
+
+func TestSpacePrune_NoWorktreeAbsentSandboxReclaimsDanglingRecord(t *testing.T) {
+	dir := pruneStateDir(t)
+	pruneAddBinding(t, dir, herdrspace.Binding{SpaceLabel: "lblDangling", HerdrWorkspaceID: "wxD", SandboxHandle: "p/vanished"})
+
+	var removeCalls []string
+	stubPruneVars(t, map[string]string{}, nil, &removeCalls, fmt.Errorf("%w: vanished", service.ErrNotFound))
+	stubPruneStatus(t, "", fmt.Errorf("%w: vanished", service.ErrNotFound), nil)
+
+	var stdout, stderr bytes.Buffer
+	code := runSpacePrune(context.Background(), []string{"--apply", "--workspace", "wxD"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("dangling record: want 0, got %d; stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "reclaimed p/vanished") {
+		t.Errorf("dangling record: want reclaimed line; got %q", stdout.String())
+	}
+	bs, _ := herdrspace.List(context.Background(), dir)
+	if len(bs) != 0 {
+		t.Errorf("dangling record: binding must be deleted; got %v", bs)
 	}
 }
 

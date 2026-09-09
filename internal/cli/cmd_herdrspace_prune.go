@@ -74,9 +74,29 @@ func pruneRunningCheck(ctx context.Context, project, name string) (running bool,
 	return status == coreruntime.SandboxStatusRunning, nil
 }
 
+type sandboxLiveness int
+
+const (
+	sandboxLivenessUnknown sandboxLiveness = iota
+	sandboxLivenessRunning
+	sandboxLivenessIdle
+)
+
+func pruneLiveness(ctx context.Context, handle string) (sandboxLiveness, error) {
+	project, name := splitSandboxHandle(handle)
+	running, err := pruneRunningCheck(ctx, project, name)
+	if err != nil {
+		return sandboxLivenessUnknown, err
+	}
+	if running {
+		return sandboxLivenessRunning, nil
+	}
+	return sandboxLivenessIdle, nil
+}
+
 func pruneReclaim(ctx context.Context, project, name string) error {
 	err := pruneRemoveSandbox(ctx, project, name)
-	if err == nil {
+	if err == nil || errors.Is(err, service.ErrNotFound) {
 		return nil
 	}
 	if stopErr := pruneStopSandbox(ctx, project, name); stopErr != nil {
@@ -135,7 +155,15 @@ func runSpacePrune(ctx context.Context, args []string, out, errW io.Writer) int 
 
 	for _, b := range bindings {
 		considered++
-		reason, stranded := pruneStrandReason(live, b)
+		state := sandboxLivenessUnknown
+		if strings.TrimSpace(b.CheckoutPath) == "" {
+			var stateErr error
+			state, stateErr = pruneLiveness(ctx, b.SandboxHandle)
+			if stateErr != nil {
+				fmt.Fprintf(errW, "space-prune: %s: cannot determine sandbox status: %v\n", b.SandboxHandle, stateErr)
+			}
+		}
+		reason, stranded := pruneStrandReason(live, b, state)
 		if !stranded {
 			fmt.Fprintf(out, "space-prune: keep %s workspace=%s reason=%s\n", b.SandboxHandle, b.HerdrWorkspaceID, reason)
 			continue
@@ -178,11 +206,20 @@ func runSpacePrune(ctx context.Context, args []string, out, errW io.Writer) int 
 	return 0
 }
 
-func pruneStrandReason(live map[string]string, b herdrspace.Binding) (reason string, stranded bool) {
+func pruneStrandReason(live map[string]string, b herdrspace.Binding, state sandboxLiveness) (reason string, stranded bool) {
 	_, workspaceLive := live[b.HerdrWorkspaceID]
 	path := strings.TrimSpace(b.CheckoutPath)
 	if path == "" {
-		return "no-checkout-path-recorded", false
+		switch {
+		case workspaceLive:
+			return "workspace-alive-no-worktree", false
+		case state == sandboxLivenessRunning:
+			return "workspace-gone-sandbox-running", false
+		case state == sandboxLivenessIdle:
+			return "workspace-gone+sandbox-not-running", true
+		default:
+			return "sandbox-state-unknown", false
+		}
 	}
 	_, statErr := os.Stat(path)
 	pathGone := os.IsNotExist(statErr)
