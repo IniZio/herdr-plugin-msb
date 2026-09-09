@@ -529,7 +529,7 @@ func runDeclare(_ context.Context, args []string, out io.Writer, errW io.Writer)
 	if len(body) == 0 {
 		body = append(body, "no new ports to forward")
 	}
-	n := &Notifier{Run: portfwd.OSRunner, HerdrB: os.Getenv("HERDR_BIN")}
+	n := &Notifier{Run: portfwd.OSRunner, HerdrB: undeletedHerdrBin(os.Getenv("HERDR_BIN"))}
 	if err := n.Notify(context.Background(), "microsandbox ports", body); err != nil {
 		fmt.Fprintln(errW, err)
 		return 1

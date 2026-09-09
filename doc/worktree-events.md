@@ -269,11 +269,23 @@ Two full runs on throwaway worktrees, differing only in whether the hook passed
 | positive | `space-prune --apply --kill-running --workspace w8R` | `rc=0 output=space-prune: reclaimed herdr/s57probe2 workspace=w8R reason=workspace-gone+worktree-gone:<path>` / `considered=1 reclaimable=1 applied=1` | gone |
 
 In the positive run nothing removed the sandbox by hand: the only commands issued were
-`herdr worktree create`, `space-convert`, and `herdr worktree remove --force`. herdr's own
-`herdr plugin log list` records that invocation of `plugins/herdr/bin/on-worktree-removed.sh`
-as `exit_code: 0, status: succeeded`, and the binding disappeared from
-`herdr-space-bindings.json`. The operator's `msb:eyeball` binding was `keep
+`herdr worktree create`, `space-convert`, and `herdr worktree remove --force`. The
+discriminating record is the hook's own events log at
+`$XDG_STATE_HOME/herdr-plugin-msb/herdr-events.log` (the `events-log line` column above):
+`rc=0 ... reclaimed herdr/s57probe2` for the positive run against `rc=1 ... refusing to
+reclaim RUNNING sandbox` for the negative. The binding disappeared from
+`herdr-space-bindings.json`, and the operator's `msb:eyeball` binding was `keep
 reason=no-checkout-path-recorded` in the dry run before and after.
+
+`herdr plugin log list` records the hook's **duration** as a second discriminating signal —
+2099 ms for the reclaim against 29 ms for the refusal, and a running microVM cannot be torn
+down in 29 ms. Its `exit_code` field is **not** evidence for the runs above: at the time
+those runs were taken the hook ended in a `printf` and never propagated `PRUNE_RC`, so it
+exited 0 on every path and both the positive run and the negative control recorded
+`exit_code: 0, status: succeeded`. A check that returns the same value on both sides of a
+control proves nothing. The hook now exits `PRUNE_RC` (§2), so the field discriminates for
+runs taken after that change; a non-zero exit is a diagnostic signal only, since a failing
+hook neither aborts the herdr operation nor is retried (`doc/herdr-event-contract.md`).
 
 ### 3.6 A replaced herdr binary broke the hook, and how
 

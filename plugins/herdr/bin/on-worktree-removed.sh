@@ -59,3 +59,5 @@ set -e
 
 printf '%s event=%s space-prune=done rc=%s output=%s\n' \
     "$TS" "$EVT" "$PRUNE_RC" "$PRUNE_OUT" >> "$LOG"
+
+exit "$PRUNE_RC"
