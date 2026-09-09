@@ -254,7 +254,7 @@ func runSpaceConvert(ctx context.Context, args []string, out, errW io.Writer) in
 		return 1
 	}
 
-	if err := herdrOpenGuestPane(ctx, bin, *workspaceID, rootPaneID, name, *project, out); err != nil {
+	if err := herdrOpenGuestPane(ctx, bin, *workspaceID, rootPaneID, name, *project, checkoutPath, out); err != nil {
 		fmt.Fprintln(errW, err)
 		return 1
 	}

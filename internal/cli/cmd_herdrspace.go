@@ -76,7 +76,7 @@ func herdrWorkspaceClose(ctx context.Context, bin, workspaceID string) error {
 	return cmd.Run()
 }
 
-func herdrOpenGuestPane(ctx context.Context, bin, workspaceID, rootPaneID, sandbox, project string, out io.Writer) error {
+func guestPaneArgs(workspaceID, rootPaneID, sandbox, project, hostCwd string) []string {
 	args := []string{
 		"plugin", "pane", "open",
 		"--plugin", PluginID,
@@ -89,7 +89,14 @@ func herdrOpenGuestPane(ctx context.Context, bin, workspaceID, rootPaneID, sandb
 	} else {
 		args = append(args, "--workspace", workspaceID)
 	}
-	args = append(args, "--no-focus")
+	if strings.TrimSpace(hostCwd) != "" {
+		args = append(args, "--cwd", hostCwd)
+	}
+	return append(args, "--no-focus")
+}
+
+func herdrOpenGuestPane(ctx context.Context, bin, workspaceID, rootPaneID, sandbox, project, hostCwd string, out io.Writer) error {
+	args := guestPaneArgs(workspaceID, rootPaneID, sandbox, project, hostCwd)
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Stdout = out
 	cmd.Stderr = os.Stderr
@@ -134,7 +141,7 @@ func runSpaceCreate(ctx context.Context, args []string, out, errW io.Writer) int
 		return 1
 	}
 
-	if err := herdrOpenGuestPane(ctx, bin, workspaceID, rootPaneID, name, *project, out); err != nil {
+	if err := herdrOpenGuestPane(ctx, bin, workspaceID, rootPaneID, name, *project, b.CheckoutPath, out); err != nil {
 		fmt.Fprintln(errW, err)
 		return 1
 	}
@@ -171,7 +178,7 @@ func runSpaceOpenPane(ctx context.Context, args []string, out, errW io.Writer) i
 
 	project, name := splitHandle(b.SandboxHandle)
 	bin := herdrBin()
-	if err := herdrOpenGuestPane(ctx, bin, workspaceID, "", name, project, out); err != nil {
+	if err := herdrOpenGuestPane(ctx, bin, workspaceID, "", name, project, b.CheckoutPath, out); err != nil {
 		fmt.Fprintln(errW, err)
 		return 1
 	}
@@ -203,7 +210,7 @@ func runNewTab(ctx context.Context, args []string, out, errW io.Writer) int {
 	if lookupErr == nil {
 		project, name := splitHandle(b.SandboxHandle)
 		bin := herdrBin()
-		if err := herdrOpenGuestPane(ctx, bin, workspaceID, "", name, project, out); err != nil {
+		if err := herdrOpenGuestPane(ctx, bin, workspaceID, "", name, project, b.CheckoutPath, out); err != nil {
 			fmt.Fprintln(errW, err)
 			return 1
 		}

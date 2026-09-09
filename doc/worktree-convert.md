@@ -203,3 +203,42 @@ but the unstubbed verb sweep remains a live hazard for every other mutating verb
 `$SHELL`, which exits 0. Every test declared after it never runs, and the buffered failure
 report of every test before it is discarded. Read `-v` output, not the package summary,
 when a result matters.
+
+## The sidebar branch row is resolved from the guest pane's host cwd
+
+herdr's default expanded space rows are
+`[["state_icon", "workspace"], ["branch", "git_status"]]`, and it fills `branch` by running
+git discovery over the workspace cwd, which tracks the active pane's reported cwd — not the
+workspace's `worktree.checkout_path`. `herdr workspace get` and `herdr worktree list` both
+kept reporting the correct linked worktree and branch throughout the bug, which is why the
+record looked healthy while the sidebar did not.
+
+`herdr plugin pane open` defaults a plugin pane's cwd to the **plugin root**. Measured with a
+throwaway plugin linked from `/tmp/dz/probeplug`: with no `--cwd`, the pane came back with
+`cwd=/tmp/dz/probeplug`. For this plugin the root is the msb repo's own primary checkout, so
+after `space-convert` closed the original root pane the only remaining pane sat on `main`, and
+the sidebar showed `main` for every converted worktree workspace. The coincidence that the
+plugin is developed inside the repo it sandboxes made this read as "the repo root".
+
+`space-convert` therefore passes `--cwd <checkout_path>` when opening the guest pane
+(`guestPaneArgs` in `internal/cli/cmd_herdrspace.go`), as do `space-open-pane` and `new-tab`
+via the binding's `CheckoutPath`.
+
+That flag alone is not sufficient. herdr resolves a relative pane command against the pane's
+cwd, not against the plugin root. Two runs of the same throwaway plugin, whose manifest ran
+`["sh", "sub/probe.sh"]`, gave opposite outcomes: with no `--cwd` the pane survived, and with
+`--cwd /tmp` it exited immediately because `sub/probe.sh` did not exist there. So the shell
+pane command in `herdr-plugin.toml` now locates the script through `$HERDR_PLUGIN_ROOT`,
+which herdr exports to plugin panes; re-running the probe with that form kept the pane alive
+under an arbitrary `--cwd`. `TestManifestShellPaneCommandIsCwdIndependent` guards it.
+
+This is **not** the guest mount path. `GuestWorktree` stays `/workspace`; host-path parity
+would not have moved the sidebar, because the pane's cwd is a host process attribute and the
+guest mount point never enters it.
+
+### Unrelated defect observed while diagnosing
+
+Inside a converted guest, `/workspace/.git` is a file reading
+`gitdir: <host repo>/.git/worktrees/<name>`, a host path that is not mounted into the guest,
+so in-guest git cannot resolve the worktree HEAD. That is a real problem and it is the one
+host-path parity would address, but it is a separate defect from the sidebar branch row.

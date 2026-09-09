@@ -11,6 +11,35 @@ import (
 	"testing"
 )
 
+func TestManifestShellPaneCommandIsCwdIndependent(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	manifest := filepath.Join(filepath.Dir(thisFile), "../../herdr-plugin.toml")
+	raw, err := os.ReadFile(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	line := ""
+	for _, l := range strings.Split(string(raw), "\n") {
+		if strings.Contains(l, "pane.sh") {
+			line = l
+			break
+		}
+	}
+	if line == "" {
+		t.Fatal("no pane.sh command found in herdr-plugin.toml")
+	}
+	if !strings.Contains(line, "$HERDR_PLUGIN_ROOT") {
+		t.Fatalf("the shell pane command must locate pane.sh through $HERDR_PLUGIN_ROOT.\n"+
+			"space-convert opens the guest pane with --cwd <worktree>, and herdr resolves a\n"+
+			"relative command against that cwd, not the plugin root, so a relative path makes\n"+
+			"the pane exit immediately. got: %s", strings.TrimSpace(line))
+	}
+}
+
 func TestPaneShGuestCwd(t *testing.T) {
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {

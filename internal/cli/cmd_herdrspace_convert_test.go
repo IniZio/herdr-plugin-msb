@@ -175,6 +175,41 @@ func TestSpaceConvert_SplitsBeforeClosingRootAndNeverCreatesWorkspace(t *testing
 	}
 }
 
+func TestSpaceConvert_GuestPaneOpensInTheWorktreeCheckout(t *testing.T) {
+	stateParent := t.TempDir()
+	bin, logPath := fakeHerdrConvertBin(t, convertWorkspaceJSON)
+	t.Setenv("HERDR_BIN_PATH", bin)
+	t.Setenv("XDG_STATE_HOME", stateParent)
+
+	var created []string
+	stubConvertSandbox(t, &created, nil)
+
+	var stdout, stderr bytes.Buffer
+	code := runSpaceConvert(context.Background(),
+		[]string{"--workspace", "w9", "--image", "img:latest", "--project", "demo"},
+		&stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("space-convert: want 0, got %d; stderr=%q", code, stderr.String())
+	}
+
+	open := ""
+	for _, line := range readArgvLog(t, logPath) {
+		if strings.HasPrefix(line, "plugin pane open") {
+			open = line
+			break
+		}
+	}
+	if open == "" {
+		t.Fatalf("no guest-pane open recorded")
+	}
+	if !strings.Contains(open, "--cwd /home/u/wt/lms") {
+		t.Fatalf("guest pane must open with the worktree checkout as its host cwd, or herdr\n"+
+			"resolves the sidebar branch/git_status rows from the plugin root instead of the\n"+
+			"worktree (the sidebar then reads the plugin repo's branch, e.g. \"main\").\n"+
+			"want --cwd /home/u/wt/lms in: %s", open)
+	}
+}
+
 func TestSpaceConvert_NoWorktreeFailsAndCreatesNothing(t *testing.T) {
 	stateParent := t.TempDir()
 	noWT := `{"id":"cli:workspace:get","result":{"type":"workspace_info","workspace":{"workspace_id":"w9","label":"scratch","active_tab_id":"w9:t1"}}}`
