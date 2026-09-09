@@ -84,8 +84,15 @@ on = "worktree.removed"
 command = ["sh", "plugins/herdr/bin/on-worktree-removed.sh"]
 platforms = ["linux"]
 
+[[actions]]
+id = "ports-toggle"
+title = "Toggle Port Forward"
+command = ["herdr-plugin-msb", "ports-toggle"]
+contexts = ["workspace"]
+platforms = ["linux"]
+
 [[link_handlers]]
 id = "local-port"
 title = "Local Port"
-pattern = 'http://127\.0\.0\.1:\d+'
-action = "ports-declare"
+pattern = 'http://127\.\d+\.\d+\.\d+:\d+'
+action = "ports-toggle"
