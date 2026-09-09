@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 
 	"github.com/IniZio/herdr-plugin-msb/internal/core/admission"
 	msbsdk "github.com/superradcompany/microsandbox/sdk/go"
 )
+
+const maxCommittedPages = 1000
 
 var _ admission.Accountant = (*Runtime)(nil)
 
@@ -35,31 +38,66 @@ func memoryMiBFromRecord(configJSON string) (uint32, error) {
 	return 0, fmt.Errorf("memory_mib absent or zero at resources.memory_mib and top-level memory_mib")
 }
 
-func (r *Runtime) CommittedMemoryMiB(ctx context.Context) (uint32, error) {
+type memRecordRef struct {
+	name       string
+	configJSON string
+}
+
+type memPageFetcher func(ctx context.Context, cursor *string) ([]memRecordRef, *string, error)
+
+func sumCommittedMiB(ctx context.Context, fetch memPageFetcher) (uint32, error) {
 	var total uint32
 	var cursor *string
-	for {
-		var page *msbsdk.SandboxPage
-		var err error
-		if cursor == nil {
-			page, err = msbsdk.ListSandboxes(ctx)
-		} else {
-			page, err = msbsdk.ListSandboxesWith(ctx, msbsdk.WithListCursor(*cursor))
+	for pages := 0; ; pages++ {
+		if err := ctx.Err(); err != nil {
+			return 0, fmt.Errorf("msb: committed-memory: %w", err)
 		}
+		if pages >= maxCommittedPages {
+			return 0, fmt.Errorf("msb: committed-memory: sandbox listing exceeded %d pages; refusing to keep paging", maxCommittedPages)
+		}
+		records, next, err := fetch(ctx, cursor)
 		if err != nil {
 			return 0, fmt.Errorf("msb: list sandboxes: %w", err)
 		}
-		for _, h := range page.Sandboxes {
-			mib, err := memoryMiBFromRecord(h.ConfigJSON())
+		for _, rec := range records {
+			mib, err := memoryMiBFromRecord(rec.configJSON)
 			if err != nil {
-				return 0, fmt.Errorf("msb: committed-memory: sandbox %q: %w", h.Name(), err)
+				return 0, fmt.Errorf("msb: committed-memory: sandbox %q: %w", rec.name, err)
 			}
-			total += mib
+			if total > math.MaxUint32-mib {
+				total = math.MaxUint32
+			} else {
+				total += mib
+			}
 		}
-		if page.NextCursor == nil {
-			break
+		if next == nil {
+			return total, nil
 		}
-		cursor = page.NextCursor
+		if cursor != nil && *next == *cursor {
+			return 0, fmt.Errorf("msb: committed-memory: daemon repeated list cursor %q; refusing to keep paging", *next)
+		}
+		cursor = next
 	}
-	return total, nil
+}
+
+func listSandboxRecords(ctx context.Context, cursor *string) ([]memRecordRef, *string, error) {
+	var page *msbsdk.SandboxPage
+	var err error
+	if cursor == nil {
+		page, err = msbsdk.ListSandboxes(ctx)
+	} else {
+		page, err = msbsdk.ListSandboxesWith(ctx, msbsdk.WithListCursor(*cursor))
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	records := make([]memRecordRef, 0, len(page.Sandboxes))
+	for _, h := range page.Sandboxes {
+		records = append(records, memRecordRef{name: h.Name(), configJSON: h.ConfigJSON()})
+	}
+	return records, page.NextCursor, nil
+}
+
+func (r *Runtime) CommittedMemoryMiB(ctx context.Context) (uint32, error) {
+	return sumCommittedMiB(ctx, listSandboxRecords)
 }
