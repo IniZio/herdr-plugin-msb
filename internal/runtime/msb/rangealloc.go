@@ -66,6 +66,9 @@ func checkCollisionFrom(ctx context.Context, name string, base uint16, fetch por
 		if next == nil {
 			return nil
 		}
+		if cursor != nil && *next == *cursor {
+			return fmt.Errorf("rangealloc: CheckCollision: daemon repeated list cursor %q; refusing to keep paging", *next)
+		}
 		cursor = next
 	}
 }

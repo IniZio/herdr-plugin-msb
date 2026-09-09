@@ -83,12 +83,16 @@ func TestOccupiedBlocksSixSandboxes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PROOF SIX FAIL: unexpected error with 6 sandboxes: %v", err)
 	}
+	allOk := true
 	for i := range rangeMaxBlocks {
 		if !occ[i] {
 			t.Errorf("PROOF SIX FAIL: block %d not occupied", i)
+			allOk = false
 		}
 	}
-	t.Logf("PROOF SIX PASS: all 6 blocks occupied with 6 fake sandboxes (live VMs unsafe under memory rules; fake used per task brief) — mask %v", occ)
+	if allOk {
+		t.Logf("PROOF SIX PASS: all 6 blocks occupied with 6 fake sandboxes (live VMs unsafe under memory rules; fake used per task brief) — mask %v", occ)
+	}
 }
 
 func TestBlockPortMap(t *testing.T) {
@@ -127,6 +131,39 @@ func TestCheckCollision(t *testing.T) {
 			t.Fatalf("want nil for own sandbox, got: %v", err)
 		}
 	})
+
+	t.Run("page bound refused", func(t *testing.T) {
+		calls := 0
+		fetch := func(_ context.Context, _ *string) ([]portRecord, *string, error) {
+			calls++
+			if calls > maxCommittedPages+1 {
+				t.Fatalf("fetch called %d times; page bound (%d) not enforced", calls, maxCommittedPages)
+			}
+			next := fmt.Sprintf("cursor-%d", calls)
+			return nil, &next, nil
+		}
+		err := checkCollisionFrom(context.Background(), "my-sb", base, fetch)
+		if err == nil {
+			t.Fatal("want page-bound error, got nil")
+		}
+		if !strings.Contains(err.Error(), "exceeded") {
+			t.Fatalf("error %q does not mention page bound", err.Error())
+		}
+	})
+
+	t.Run("repeated cursor refused", func(t *testing.T) {
+		fetch := func(_ context.Context, _ *string) ([]portRecord, *string, error) {
+			stuck := "stuck"
+			return nil, &stuck, nil
+		}
+		err := checkCollisionFrom(context.Background(), "my-sb", base, fetch)
+		if err == nil {
+			t.Fatal("want repeated-cursor error, got nil")
+		}
+		if !strings.Contains(err.Error(), "repeated") {
+			t.Fatalf("error %q does not mention repeated cursor", err.Error())
+		}
+	})
 }
 
 func TestOccupiedBlocks_RepeatedCursorRefused(t *testing.T) {
@@ -152,6 +189,9 @@ func TestOccupiedBlocks_PageBoundRefused(t *testing.T) {
 	calls := 0
 	fetch := func(_ context.Context, _ *string) ([]portRecord, *string, error) {
 		calls++
+		if calls > maxCommittedPages+1 {
+			t.Fatalf("fetch called %d times; page bound (%d) not enforced", calls, maxCommittedPages)
+		}
 		next := fmt.Sprintf("cursor-%d", calls)
 		return []portRecord{{name: "a", configJSON: makePortsJSON(uint32(rangeAllocBase) + 1)}}, &next, nil
 	}
