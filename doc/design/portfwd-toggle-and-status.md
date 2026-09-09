@@ -56,10 +56,32 @@ c9d0d03); a second unsourced capability claim is the same failure repeating.
   stdin bound to it, and a blocking read — the three things the TUI surface needs.
   Not tested: keypress delivery from a human, and whether input can be injected
   programmatically through the herdr API. Neither affects the surface being viable.
-- herdr has no plugin autostart hook (no `startup/session.started` event, no
-  `daemon/service` subcommand). The laptop `local-agent` must be started by
-  launchd on macOS. That is an OS-layer deliverable; design it explicitly (§B-5
-  and Slice L).
+- **CORRECTION (2026-09-09) — an earlier revision of this bullet stated "herdr
+  has no plugin autostart hook (no `startup/session.started` event, no
+  `daemon/service` subcommand)." That statement was false, and an agent used it
+  as the basis for concluding launchd was required solely because herdr lacked a
+  hook. The real reason is different — see below.**
+
+  `[[startup]]` IS a real manifest stanza in herdr 0.8.0. A startup command runs
+  once per enabled plugin after the server restores the session and its API socket
+  is ready; it runs again on live-handoff server takeover, but not on client
+  attach, config reload, or plugin link/enable. It is explicitly one-shot: the
+  docs say a hook "should restore plugin-owned state, call any required Herdr
+  APIs, and exit." A startup failure does not stop the server.
+
+  **The actual reason `[[startup]]` cannot start the laptop agent:** plugin
+  commands — `[[actions]]`, `[[events]]`, `[[panes]]`, and `[[startup]]` — all
+  execute where the herdr **server** runs. Under `herdr --remote newman@engine-03`
+  the server is on the engine, so every startup command runs on the engine.
+  herdr cannot start anything on the laptop. This is the same constraint that
+  applies to all plugin entry points (MSP-R-010:
+  `doc/specs/msp/requirements/msp-r-010-herdr-remote-attach.md`, verified
+  2026-09-08 by slice s10c-herdr-remote-attach: "plugin commands execute where
+  the herdr **server** runs"). Consistent with `portfwd-ux.md` §3.3.
+
+  The laptop `local-agent` must therefore be started by the laptop. launchd on
+  macOS is one mechanism (§B-5 and Slice L), though the broader re-plan of
+  scoping forwards to an active herdr attach session may supersede it.
 
 **Finding 2 — pane relay PROVEN (closes OQ-2 from portfwd-ux.md §5):**
 
