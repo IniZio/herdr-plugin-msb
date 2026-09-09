@@ -1,4 +1,4 @@
-.PHONY: build typecheck install vet test
+.PHONY: build typecheck install vet test test-capped
 
 GOMAXPROCS      ?= 4
 GOBUILD_P       ?= 4
@@ -40,4 +40,7 @@ vet:
 	go run ./tools/importban .
 
 test:
+	@scripts/test-session.sh $(MAKE) test-capped
+
+test-capped:
 	$(call CAPPED,go test -race -p $(GOTEST_P) -parallel $(GOTEST_PARALLEL) -count=1 $(GOTEST_ARGS) ./...)

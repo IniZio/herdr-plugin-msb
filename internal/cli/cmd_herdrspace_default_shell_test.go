@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,6 +70,55 @@ func TestGuestShellArgv(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestRunDefaultShellStubExec(t *testing.T) {
+	t.Setenv("HERDR_WORKSPACE_ID", "")
+	t.Setenv("HERDR_MSB_DEFAULT_SHELL_ACTIVE", "")
+
+	var capturedArgv0 string
+	var capturedArgv []string
+	old := execProcess
+	execProcess = func(argv0 string, argv []string, _ []string) error {
+		capturedArgv0 = argv0
+		capturedArgv = argv
+		return nil
+	}
+	defer func() { execProcess = old }()
+
+	sh := os.Getenv("SHELL")
+	if sh == "" {
+		sh = "/bin/sh"
+	}
+
+	var errBuf strings.Builder
+	runDefaultShell(context.Background(), nil, io.Discard, &errBuf)
+
+	if capturedArgv0 != sh {
+		t.Fatalf("stub: argv0 want %q got %q", sh, capturedArgv0)
+	}
+	if len(capturedArgv) < 1 || capturedArgv[0] != sh {
+		t.Fatalf("stub: argv[0] want %q got %v", sh, capturedArgv)
+	}
+}
+
+func TestRunDefaultShellGuardUnderTest(t *testing.T) {
+	t.Setenv("HERDR_WORKSPACE_ID", "")
+	t.Setenv("HERDR_MSB_DEFAULT_SHELL_ACTIVE", "")
+
+	var errBuf strings.Builder
+	code := runDefaultShell(context.Background(), nil, io.Discard, &errBuf)
+
+	if code == 0 {
+		t.Fatalf("want non-zero exit code under go test, got 0 (errW: %q)", errBuf.String())
+	}
+	sentinel := true
+	if !sentinel {
+		t.Fatal("unreachable: process was replaced")
+	}
+	if !strings.Contains(errBuf.String(), "refused") {
+		t.Fatalf("want 'refused' in error output, got %q", errBuf.String())
 	}
 }
 

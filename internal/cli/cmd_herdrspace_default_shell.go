@@ -9,11 +9,19 @@ import (
 	"os/exec"
 	"strings"
 	"syscall"
+	"testing"
 	"time"
 
 	"github.com/IniZio/herdr-plugin-msb/internal/core/herdrspace"
 	"github.com/IniZio/herdr-plugin-msb/internal/core/service"
 )
+
+var execProcess func(string, []string, []string) error = func(argv0 string, argv []string, envv []string) error {
+	if testing.Testing() {
+		return fmt.Errorf("refused to exec under go test: %s", argv0)
+	}
+	return syscall.Exec(argv0, argv, envv)
+}
 
 const defaultShellSentinel = "HERDR_MSB_DEFAULT_SHELL_ACTIVE"
 
@@ -69,25 +77,26 @@ func runDefaultShell(ctx context.Context, _ []string, _ io.Writer, errW io.Write
 
 	dec := defaultShellDecide(ctx, os.Getenv, dir, herdrspace.GetByWorkspaceID)
 
-	hostShell := func() {
+	hostShell := func() int {
 		sh := os.Getenv("SHELL")
 		if sh == "" {
 			sh = "/bin/sh"
 		}
-		_ = syscall.Exec(sh, []string{sh}, os.Environ())
-		os.Exit(1)
+		if err := execProcess(sh, []string{sh}, os.Environ()); err != nil {
+			fmt.Fprintln(errW, "default-shell: host exec:", err)
+			return 1
+		}
+		return 0
 	}
 
 	if !dec.useGuest {
-		hostShell()
-		return 0
+		return hostShell()
 	}
 
 	plugin, err := os.Executable()
 	if err != nil {
 		fmt.Fprintln(errW, "default-shell: resolve binary:", err)
-		hostShell()
-		return 0
+		return hostShell()
 	}
 
 	probeCtx, cancelProbe := context.WithTimeout(ctx, defaultShellProbeTimeout)
@@ -108,9 +117,9 @@ func runDefaultShell(ctx context.Context, _ []string, _ io.Writer, errW io.Write
 	argv := guestShellArgv(plugin, dec.project, dec.sandbox, guestShell)
 
 	env := append(os.Environ(), defaultShellSentinel+"=1")
-	if execErr := syscall.Exec(plugin, argv, env); execErr != nil {
+	if execErr := execProcess(plugin, argv, env); execErr != nil {
 		fmt.Fprintln(errW, "default-shell: exec guest:", execErr)
-		hostShell()
+		return hostShell()
 	}
 	return 0
 }
