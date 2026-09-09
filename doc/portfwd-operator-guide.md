@@ -417,6 +417,11 @@ path — guest-A reaching guest-B's service through the engine's loopback
 stack — is unproven. This requires input on engine-side routing rules and
 has not been measured.
 
+### 4. Adding a port requires recreating the sandbox (not yet implemented)
+
+See §5 for the recreate stub: the confirmation prompt is wired but the actual
+recreate path is not (prints `recreation not yet implemented (Slice C)` and exits).
+
 ### 3. Alias and IP forms of the same engine yield two SSH masters
 
 `--target engine-03` and `--target 100.64.0.156` each create a separate

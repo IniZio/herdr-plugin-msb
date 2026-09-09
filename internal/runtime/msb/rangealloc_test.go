@@ -30,15 +30,20 @@ func TestOccupiedBlocksNormalPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	allOk := true
 	if !occ[0] {
 		t.Error("block 0 should be occupied")
+		allOk = false
 	}
 	for i := 1; i < rangeMaxBlocks; i++ {
 		if occ[i] {
 			t.Errorf("block %d should be free", i)
+			allOk = false
 		}
 	}
-	t.Logf("PROOF NORMAL: correct config → block mask %v", occ)
+	if allOk {
+		t.Logf("PROOF NORMAL: correct config → block mask %v", occ)
+	}
 }
 
 func TestOccupiedBlocksSchemaDrift(t *testing.T) {
@@ -64,7 +69,7 @@ func TestOccupiedBlocksOwnershipHole(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !occ[0] {
-		t.Error("PROOF OH UNIT FAIL: block 0 occupied even when base port absent")
+		t.Error("PROOF OH UNIT FAIL: block 0 NOT occupied though ports in that block are published — ownership hole not closed")
 	} else {
 		t.Logf("PROOF OH UNIT PASS: block 0 occupied despite base port absent — ownership hole correctly closed")
 	}
