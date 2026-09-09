@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"testing"
 
@@ -102,11 +103,18 @@ func recJSON(mib uint32) string {
 	return fmt.Sprintf(`{"resources":{"memory_mib":%d}}`, mib)
 }
 
+func cursorLabel(cursor *string) string {
+	if cursor == nil {
+		return "<nil>"
+	}
+	return *cursor
+}
+
 func TestSumCommittedMiB_SumsAcrossPages(t *testing.T) {
-	calls := 0
+	var seen []string
 	fetch := func(_ context.Context, cursor *string) ([]memRecordRef, *string, error) {
-		calls++
-		switch calls {
+		seen = append(seen, cursorLabel(cursor))
+		switch len(seen) {
 		case 1:
 			next := "p2"
 			return []memRecordRef{{name: "a", configJSON: recJSON(1024)}}, &next, nil
@@ -121,10 +129,47 @@ func TestSumCommittedMiB_SumsAcrossPages(t *testing.T) {
 	if got != 3072 {
 		t.Fatalf("got %d MiB, want 3072 MiB", got)
 	}
-	if calls != 2 {
-		t.Fatalf("fetched %d pages, want 2", calls)
+	want := []string{"<nil>", "p2"}
+	if !slices.Equal(seen, want) {
+		t.Fatalf("fetcher received cursors %v, want %v", seen, want)
 	}
 }
+
+func TestSumCommittedMiB_ThreadsEachNextCursorToTheNextFetch(t *testing.T) {
+	pages := []struct {
+		wantCursor string
+		next       *string
+	}{
+		{wantCursor: "<nil>", next: ptr("p2")},
+		{wantCursor: "p2", next: ptr("p3")},
+		{wantCursor: "p3", next: nil},
+	}
+	var seen []string
+	fetch := func(_ context.Context, cursor *string) ([]memRecordRef, *string, error) {
+		i := len(seen)
+		seen = append(seen, cursorLabel(cursor))
+		if i >= len(pages) {
+			return nil, nil, fmt.Errorf("fetched page %d beyond the %d staged pages", i+1, len(pages))
+		}
+		return []memRecordRef{{name: "a", configJSON: recJSON(256)}}, pages[i].next, nil
+	}
+	got, err := sumCommittedMiB(context.Background(), fetch)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != 768 {
+		t.Fatalf("got %d MiB, want 768 MiB", got)
+	}
+	var want []string
+	for _, p := range pages {
+		want = append(want, p.wantCursor)
+	}
+	if !slices.Equal(seen, want) {
+		t.Fatalf("fetcher received cursors %v, want %v (each page's NextCursor must reach the next fetch)", seen, want)
+	}
+}
+
+func ptr(s string) *string { return &s }
 
 func TestSumCommittedMiB_RepeatedCursorRefused(t *testing.T) {
 	calls := 0
