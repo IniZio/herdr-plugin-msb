@@ -351,6 +351,9 @@ func TestMasterArgv(t *testing.T) {
 		"-o", "ControlPersist=yes",
 		"-o", "BatchMode=yes",
 		"-o", "GatewayPorts=no",
+		"-o", "ConnectTimeout=10",
+		"-o", "ServerAliveInterval=15",
+		"-o", "ServerAliveCountMax=3",
 		"user@host",
 	}
 	got := MasterArgv("user@host", "/run/ctl")
@@ -611,5 +614,78 @@ func TestDeclarer_Declare_WritesFile(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, QueueFile)); err != nil {
 		t.Fatalf("queue file not written: %v", err)
+	}
+}
+
+func TestAgentEnsureMasterStderrInError(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "nosock")
+	knownStderr := "ssh: connect to host engine-03 port 22: Connection refused"
+	a := &Agent{
+		Target:      "engine-03",
+		ControlPath: sock,
+		Run: seqRun(nil, []runResp{
+			{code: 255},
+			{code: 255, stderr: knownStderr},
+		}),
+	}
+	err := a.EnsureMaster(context.Background())
+	if err == nil {
+		t.Fatal("want error when master open exits 255")
+	}
+	if !strings.Contains(err.Error(), "Connection refused") {
+		t.Fatalf("want stderr in error, got: %s", err.Error())
+	}
+}
+
+func TestAgentEnsureMasterStaleSocketUnlinked(t *testing.T) {
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "stale.ctl")
+	fh, err := os.Create(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fh.Close()
+	var calls [][]string
+	a := &Agent{
+		Target:      "engine-03",
+		ControlPath: sock,
+		Run: seqRun(&calls, []runResp{
+			{code: 255},
+			{code: 0},
+		}),
+	}
+	if err := a.EnsureMaster(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, statErr := os.Stat(sock); !os.IsNotExist(statErr) {
+		t.Fatal("stale socket must be removed before master open")
+	}
+	if len(calls) != 2 {
+		t.Fatalf("want 2 calls, got %d", len(calls))
+	}
+}
+
+func TestAgentEnsureMasterLiveSocketNotUnlinked(t *testing.T) {
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "live.ctl")
+	fh, err := os.Create(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fh.Close()
+	var calls [][]string
+	a := &Agent{
+		Target:      "engine-03",
+		ControlPath: sock,
+		Run: seqRun(&calls, []runResp{{code: 0}}),
+	}
+	if err := a.EnsureMaster(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, statErr := os.Stat(sock); statErr != nil {
+		t.Fatal("live socket must not be removed")
+	}
+	if len(calls) != 1 {
+		t.Fatalf("want 1 call (check only), got %d", len(calls))
 	}
 }

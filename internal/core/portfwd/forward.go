@@ -3,6 +3,7 @@ package portfwd
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -32,7 +33,7 @@ type Forwarder struct {
 }
 
 func (f *Forwarder) MasterAlive(ctx context.Context) (bool, error) {
-	_, _, code, err := f.Run(ctx, []string{
+	_, stderr, code, err := f.Run(ctx, []string{
 		"ssh", "-O", "check",
 		"-o", "ControlPath=" + f.ControlPath,
 		f.SSHHost,
@@ -46,6 +47,9 @@ func (f *Forwarder) MasterAlive(ctx context.Context) (bool, error) {
 	case 255:
 		return false, nil
 	default:
+		if s := strings.TrimSpace(stderr); s != "" {
+			return false, fmt.Errorf("ssh -O check: unexpected exit %d: %s", code, s)
+		}
 		return false, fmt.Errorf("ssh -O check: unexpected exit %d", code)
 	}
 }
@@ -58,7 +62,10 @@ func (f *Forwarder) EnsureMaster(ctx context.Context) error {
 	if alive {
 		return nil
 	}
-	_, _, code, err := f.Run(ctx, []string{
+	if _, statErr := os.Stat(f.ControlPath); statErr == nil {
+		_ = os.Remove(f.ControlPath)
+	}
+	masterArgv := []string{
 		"ssh", "-M", "-N", "-f",
 		"-o", "ControlMaster=yes",
 		"-o", "ControlPath=" + f.ControlPath,
@@ -68,29 +75,37 @@ func (f *Forwarder) EnsureMaster(ctx context.Context) error {
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "ConnectTimeout=10",
 		f.SSHHost,
-	})
+	}
+	_, masterStderr, code, err := f.Run(ctx, masterArgv)
 	if err != nil {
 		return err
 	}
 	if code != 0 {
-		return fmt.Errorf("ssh master open: exit %d", code)
+		if s := strings.TrimSpace(masterStderr); s != "" {
+			return fmt.Errorf("ssh master open: exit %d %v: %s", code, masterArgv, s)
+		}
+		return fmt.Errorf("ssh master open: exit %d %v", code, masterArgv)
 	}
 	return nil
 }
 
 func (f *Forwarder) Apply(ctx context.Context, port uint16) error {
 	spec := fmt.Sprintf("%d:127.0.0.1:%d", port, port)
-	_, _, code, err := f.Run(ctx, []string{
+	applyArgv := []string{
 		"ssh", "-O", "forward",
 		"-L", spec,
 		"-o", "ControlPath=" + f.ControlPath,
 		f.SSHHost,
-	})
+	}
+	_, applyStderr, code, err := f.Run(ctx, applyArgv)
 	if err != nil {
 		return err
 	}
 	if code != 0 {
-		return fmt.Errorf("ssh -O forward: exit %d", code)
+		if s := strings.TrimSpace(applyStderr); s != "" {
+			return fmt.Errorf("ssh -O forward: exit %d %v: %s", code, applyArgv, s)
+		}
+		return fmt.Errorf("ssh -O forward: exit %d %v", code, applyArgv)
 	}
 	return nil
 }

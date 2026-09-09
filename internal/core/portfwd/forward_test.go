@@ -3,6 +3,9 @@ package portfwd
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -273,5 +276,78 @@ func TestPresentBothUnavailableError(t *testing.T) {
 	}
 	if ok {
 		t.Fatal("must not report present when probe failed")
+	}
+}
+
+func TestEnsureMasterStderrInError(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "nosock")
+	knownStderr := "ssh: connect to host sandbox-host port 22: Connection refused"
+	f := &Forwarder{
+		ControlPath: sock,
+		SSHHost:     testHost,
+		Run: seqRun(nil, []runResp{
+			{code: 255},
+			{code: 255, stderr: knownStderr},
+		}),
+	}
+	err := f.EnsureMaster(context.Background())
+	if err == nil {
+		t.Fatal("want error when master open exits 255")
+	}
+	if !strings.Contains(err.Error(), "Connection refused") {
+		t.Fatalf("want stderr in error, got: %s", err.Error())
+	}
+}
+
+func TestEnsureMasterStaleSocketUnlinked(t *testing.T) {
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "stale.ctl")
+	fh, err := os.Create(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fh.Close()
+	var calls [][]string
+	f := &Forwarder{
+		ControlPath: sock,
+		SSHHost:     testHost,
+		Run: seqRun(&calls, []runResp{
+			{code: 255},
+			{code: 0},
+		}),
+	}
+	if err := f.EnsureMaster(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, statErr := os.Stat(sock); !os.IsNotExist(statErr) {
+		t.Fatal("stale socket must be removed before master open")
+	}
+	if len(calls) != 2 {
+		t.Fatalf("want 2 calls, got %d", len(calls))
+	}
+}
+
+func TestEnsureMasterLiveSocketNotUnlinked(t *testing.T) {
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "live.ctl")
+	fh, err := os.Create(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fh.Close()
+	var calls [][]string
+	f := &Forwarder{
+		ControlPath: sock,
+		SSHHost:     testHost,
+		Run: seqRun(&calls, []runResp{{code: 0}}),
+	}
+	if err := f.EnsureMaster(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, statErr := os.Stat(sock); statErr != nil {
+		t.Fatal("live socket must not be removed")
+	}
+	if len(calls) != 1 {
+		t.Fatalf("want 1 call (check only), got %d", len(calls))
 	}
 }

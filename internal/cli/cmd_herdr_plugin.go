@@ -97,6 +97,9 @@ func MasterArgv(target, controlPath string) []string {
 		"-o", "ControlPersist=yes",
 		"-o", "BatchMode=yes",
 		"-o", "GatewayPorts=no",
+		"-o", "ConnectTimeout=10",
+		"-o", "ServerAliveInterval=15",
+		"-o", "ServerAliveCountMax=3",
 		target,
 	}
 }
@@ -321,12 +324,19 @@ func (a *Agent) EnsureMaster(ctx context.Context) error {
 	if code == 0 {
 		return nil
 	}
-	_, _, code, err = a.Run(ctx, MasterArgv(a.Target, a.ControlPath))
+	if _, statErr := os.Stat(a.ControlPath); statErr == nil {
+		_ = os.Remove(a.ControlPath)
+	}
+	masterArgv := MasterArgv(a.Target, a.ControlPath)
+	_, masterStderr, code, err := a.Run(ctx, masterArgv)
 	if err != nil {
 		return err
 	}
 	if code != 0 {
-		return fmt.Errorf("cli: ssh master: exit %d", code)
+		if s := strings.TrimSpace(masterStderr); s != "" {
+			return fmt.Errorf("cli: ssh master: exit %d %v: %s", code, masterArgv, s)
+		}
+		return fmt.Errorf("cli: ssh master: exit %d %v", code, masterArgv)
 	}
 	return nil
 }
@@ -338,11 +348,14 @@ func (a *Agent) Tick(ctx context.Context, now time.Time) (applied []uint64, sett
 		a.applied = make(map[uint64]struct{})
 		a.specs = make(map[uint64]string)
 	}
-	qOut, _, code, runErr := a.Run(ctx, ExecArgv(a.Target, a.ControlPath, RemoteReadCommand))
+	qOut, qStderr, code, runErr := a.Run(ctx, ExecArgv(a.Target, a.ControlPath, RemoteReadCommand))
 	if runErr != nil {
 		return nil, 0, fmt.Errorf("cli: remote read: %w", runErr)
 	}
 	if code != 0 {
+		if s := strings.TrimSpace(qStderr); s != "" {
+			return nil, 0, fmt.Errorf("cli: remote read: exit %d: %s", code, s)
+		}
 		return nil, 0, fmt.Errorf("cli: remote read: exit %d", code)
 	}
 	q, parseErr := ParseQueueJSON(qOut)
