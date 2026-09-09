@@ -102,3 +102,28 @@ The live test derives its sandbox name from the current time. A fixed name is
 reusable in principle, but one run against a name whose earlier incarnation had
 been created without a policy reported unfiltered egress, and the mechanism was
 never reproduced. A unique name per run removes the variable.
+
+## Ingress is not covered by the egress profile
+
+`networkConfig()` (`runtime.go:125`) sets `DefaultEgress` and nothing else.
+The microsandbox default for ingress is `allow`, so every sandbox this package
+creates accepts inbound connections unless a caller explicitly adds ingress rules
+— which none do today. A guest service that echoes its credential to whoever
+connects defeats egress deny entirely: an inbound connection to a published port
+can carry guest-held secret material outward while `default_egress=deny` is in
+force and independently verified. The assessment confirmed this: a guest accepted
+inbound connections on a published port while outbound `1.1.1.1:443` was blocked
+(rc=1) and DNS on :53 was open (rc=0). Adding `DefaultIngress: PolicyActionDeny`
+to the `msbsdk.NetworkConfig` literal in `networkConfig()` is the fix, but it was
+not shipped with this assessment — the gap is recorded here so it is not treated
+as covered.
+
+## `nc -z` is not a valid egress probe inside a guest
+
+`nc -z` (connect-only, no data exchange) from inside a guest returns rc=0 against
+engine loopback and against another sandbox's published port even when nothing is
+delivered. Receive-side logs showed no connection arrived; the rc=0 is a libkrun
+userspace-netstack handshake artefact on the egress side. Any egress reachability
+or block claim that rests solely on a connect() exit code or `nc -z` is therefore
+vacuous in this environment. The only valid probe is asserting received bytes at a
+receiver that logs what actually arrived — the send side's exit code proves nothing.
