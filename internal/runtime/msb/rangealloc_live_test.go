@@ -363,7 +363,7 @@ func TestLiveRangeAllocBootMetrics(t *testing.T) {
 	}
 	CleanupSandbox(t, r, ref)
 
-	t.Logf("PROOF M1: boot elapsed with 10k-port block = %s", bootElapsed)
+	t.Logf("MEASURE M1: boot elapsed with 10k-port block = %s", bootElapsed)
 
 	sb, err := r.connect(ctx, ref)
 	if err != nil {
@@ -373,7 +373,7 @@ func TestLiveRangeAllocBootMetrics(t *testing.T) {
 	if merr != nil {
 		t.Logf("Metrics: %v", merr)
 	} else {
-		t.Logf("PROOF M2: MemoryBytes=%d (%.1f MiB) MemoryLimitBytes=%d Uptime=%s",
+		t.Logf("MEASURE M2: MemoryBytes=%d (%.1f MiB) MemoryLimitBytes=%d Uptime=%s",
 			metrics.MemoryBytes, float64(metrics.MemoryBytes)/1024/1024,
 			metrics.MemoryLimitBytes, metrics.Uptime)
 	}
@@ -382,7 +382,7 @@ func TestLiveRangeAllocBootMetrics(t *testing.T) {
 	}
 
 	_, psOut := hostRun(ctx, "sh", "-c", "ps -eo rss,comm | grep libkrun | awk '{sum+=$1} END {printf \"%d\", sum}'")
-	t.Logf("PROOF M3: host libkrun aggregate RSS = %s KiB", strings.TrimSpace(psOut))
+	t.Logf("MEASURE M3: host libkrun aggregate RSS = %s KiB", strings.TrimSpace(psOut))
 
 	_, ssOut := hostRun(ctx, "sh", "-c",
 		fmt.Sprintf("ss -tnlp | awk '$4 ~ /^127\\.0\\.0\\.1:/ {split($4,a,\":\"); p=a[2]+0; if(p>=%d && p<=%d) count++} END {print count+0}'",

@@ -33,6 +33,10 @@ func (a *RangeAllocator) Allocate(ctx context.Context, _ string) (uint16, error)
 }
 
 func (a *RangeAllocator) CheckCollision(ctx context.Context, name string, base uint16) error {
+	return checkCollisionFrom(ctx, name, base, portFetcherFromSDK)
+}
+
+func checkCollisionFrom(ctx context.Context, name string, base uint16, fetch portPageFetcher) error {
 	lo := uint32(base)
 	hi := lo + uint32(rangeBlockSize) - 1
 	var cursor *string
@@ -40,7 +44,7 @@ func (a *RangeAllocator) CheckCollision(ctx context.Context, name string, base u
 		if pages >= maxCommittedPages {
 			return fmt.Errorf("rangealloc: CheckCollision: exceeded %d pages", maxCommittedPages)
 		}
-		recs, next, err := portFetcherFromSDK(ctx, cursor)
+		recs, next, err := fetch(ctx, cursor)
 		if err != nil {
 			return fmt.Errorf("rangealloc: CheckCollision: list: %w", err)
 		}

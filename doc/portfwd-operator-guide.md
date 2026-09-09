@@ -151,7 +151,7 @@ Port forwards — my-sandbox
 > 3000   LIVE    since 10:00:30   ctrl+click → http://127.0.0.1:3000
   5173   IDLE
 
-  j/k  select   Enter  toggle   r  add port (recreates)   q  close
+  j/k  select   Enter  enqueue   r  add port (recreates)   q  close
 ```
 
 **A port is PENDING (request in flight):**
@@ -219,7 +219,7 @@ Port forwards — my-sandbox
   3000   LIVE    since 10:00:30
   WARNING: state is 7m old — laptop agent may be down
 
-  j/k  select   Enter  toggle   r  add port (recreates)   q  close
+  j/k  select   Enter  enqueue   r  add port (recreates)   q  close
 ```
 
 ---
@@ -416,3 +416,12 @@ loopback hop (guest reaches a published host port) is proven. The full
 path — guest-A reaching guest-B's service through the engine's loopback
 stack — is unproven. This requires input on engine-side routing rules and
 has not been measured.
+
+### 3. Alias and IP forms of the same engine yield two SSH masters
+
+`--target engine-03` and `--target 100.64.0.156` each create a separate
+ControlMaster because the ControlPath is keyed on the operator-supplied target
+string. This is deliberate — alias and IP are not guaranteed to resolve to the
+same host — but it means forwarding via one form after connecting via another
+leaves a second master open. Use one form consistently within a session to avoid
+accumulating idle masters.

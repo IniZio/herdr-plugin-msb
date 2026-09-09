@@ -146,7 +146,7 @@ func renderRow(fwd PortForward) string {
 func paneFooter(status string) string {
 	switch status {
 	case PFStatusLive:
-		return "j/k  select   Enter  toggle   r  add port (recreates)   q  close"
+		return "j/k  select   Enter  enqueue   r  add port (recreates)   q  close"
 	case PFStatusDead:
 		return "j/k  select   Enter  retry   r  add port (recreates)   q  close"
 	case PFStatusPending:

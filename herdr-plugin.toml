@@ -96,3 +96,9 @@ id = "local-port"
 title = "Local Port"
 pattern = 'http://127\.\d+\.\d+\.\d+:\d+'
 action = "ports-toggle"
+
+[[link_handlers]]
+id = "local-port-localhost"
+title = "Local Port (localhost)"
+pattern = 'http://localhost:\d+'
+action = "ports-toggle"

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -337,6 +338,35 @@ func TestPortsPaneOpenArgv_IncludesPlacementAndWorkspace(t *testing.T) {
 	if argIn(argv2, "--workspace") {
 		t.Errorf("empty workspaceID: --workspace should not appear; got %v", argv2)
 	}
+}
+
+func TestManifestPatternCoversLocalhost(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "herdr-plugin.toml"))
+	if err != nil {
+		t.Fatalf("read herdr-plugin.toml: %v", err)
+	}
+	var patterns []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "pattern") {
+			s := strings.SplitN(line, "'", 3)
+			if len(s) == 3 {
+				patterns = append(patterns, s[1])
+			}
+		}
+	}
+	check := func(probe string) {
+		t.Helper()
+		for _, p := range patterns {
+			ok, err := regexp.MatchString(p, probe)
+			if err == nil && ok {
+				return
+			}
+		}
+		t.Errorf("no pattern in herdr-plugin.toml matches %q; patterns: %v", probe, patterns)
+	}
+	check("http://localhost:3000")
+	check("http://127.0.0.1:3000")
 }
 
 func TestPortsToggle_PaneOpenTypeCheck(t *testing.T) {

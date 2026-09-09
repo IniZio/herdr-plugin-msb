@@ -189,3 +189,16 @@ A block is marked occupied if ANY live sandbox publishes a host port inside that
 ### Stability note
 
 microsandbox ships schema changes without notice. Any relocation of `network.ports[*].host_port` in `ConfigJSON()` will surface via the corroboration check, since existing sandboxes would show `liveCount > 0, portCount == 0`.
+
+## Boot cost with 10 000-port block
+
+Measured by `TestLiveRangeAllocBootMetrics` (build tag `live`) on engine-03 with a
+512 MiB Alpine guest and a 10 000-port published block:
+
+- Boot elapsed: ~529–768 ms (three live runs)
+- Guest MemoryBytes: ~84–90 MiB
+- Host libkrun aggregate RSS: measured but varies by run; see M3 log in test output
+
+These figures include microsandbox's internal port-mapping setup for the full 10 000-port
+block. They are consistent with the 320–419 ms recreate cost from `TestPublishTwoHostReach`
+(which uses a single published port) — the 10k-port block adds roughly 200–400 ms overhead.

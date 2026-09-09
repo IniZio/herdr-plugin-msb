@@ -106,10 +106,63 @@ func TestBlockPortMap(t *testing.T) {
 	}
 }
 
-func TestRangeAllocCrossProcessDefect_NegativeControl(t *testing.T) {
-	a1 := NewRangeAllocator()
-	a2 := NewRangeAllocator()
-	_ = a1
-	_ = a2
-	t.Logf("NEGATIVE CONTROL: old in-memory design returned base=%d from both fresh allocators regardless of live sandboxes; daemon-derived design reads SDK so second process sees occupied blocks", rangeAllocBase)
+func TestCheckCollision(t *testing.T) {
+	base := rangeAllocBase
+	port := uint32(base) + 1
+
+	t.Run("collision with different name", func(t *testing.T) {
+		fetch := onePage([]portRecord{{name: "other-sb", configJSON: makePortsJSON(port)}})
+		err := checkCollisionFrom(context.Background(), "my-sb", base, fetch)
+		if err == nil {
+			t.Fatal("want collision error, got nil")
+		}
+		if !strings.Contains(err.Error(), "concurrent allocation race") {
+			t.Fatalf("error %q does not mention concurrent allocation race", err.Error())
+		}
+	})
+
+	t.Run("own sandbox excluded", func(t *testing.T) {
+		fetch := onePage([]portRecord{{name: "my-sb", configJSON: makePortsJSON(port)}})
+		if err := checkCollisionFrom(context.Background(), "my-sb", base, fetch); err != nil {
+			t.Fatalf("want nil for own sandbox, got: %v", err)
+		}
+	})
+}
+
+func TestOccupiedBlocks_RepeatedCursorRefused(t *testing.T) {
+	calls := 0
+	fetch := func(_ context.Context, _ *string) ([]portRecord, *string, error) {
+		calls++
+		stuck := "stuck"
+		return []portRecord{{name: "a", configJSON: makePortsJSON(uint32(rangeAllocBase) + 1)}}, &stuck, nil
+	}
+	_, err := occupiedBlocksFrom(context.Background(), fetch)
+	if err == nil {
+		t.Fatal("want repeated-cursor error, got nil")
+	}
+	if !strings.Contains(err.Error(), "repeated list cursor") {
+		t.Fatalf("error %q does not mention repeated list cursor", err.Error())
+	}
+	if calls != 2 {
+		t.Fatalf("fetched %d pages before refusing, want 2", calls)
+	}
+}
+
+func TestOccupiedBlocks_PageBoundRefused(t *testing.T) {
+	calls := 0
+	fetch := func(_ context.Context, _ *string) ([]portRecord, *string, error) {
+		calls++
+		next := fmt.Sprintf("cursor-%d", calls)
+		return []portRecord{{name: "a", configJSON: makePortsJSON(uint32(rangeAllocBase) + 1)}}, &next, nil
+	}
+	_, err := occupiedBlocksFrom(context.Background(), fetch)
+	if err == nil {
+		t.Fatalf("want page-bound error, got nil")
+	}
+	if !strings.Contains(err.Error(), "exceeded") && !strings.Contains(err.Error(), "1000 pages") {
+		t.Fatalf("error %q does not report the page bound", err.Error())
+	}
+	if calls != maxCommittedPages {
+		t.Fatalf("fetched %d pages, want the bound %d", calls, maxCommittedPages)
+	}
 }
