@@ -112,7 +112,7 @@ func TestRunExecValidation(t *testing.T) {
 // cmd_herdrspace_*_test.go; this test asserts the registry statically.
 var shippedVerbs = []string{
 	"create", "ps", "exec", "start", "stop", "rm",
-	"version", "declare", "status", "list", "local-agent", "help",
+	"version", "declare", "status", "list", "local-agent", "fwd-sync", "help",
 	"space-create", "space-convert", "space-open-pane", "new-tab", "space-prune",
 	"default-shell",
 }

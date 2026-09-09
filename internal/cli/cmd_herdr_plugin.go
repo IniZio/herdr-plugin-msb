@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/IniZio/herdr-plugin-msb/internal/core/portfwd"
+	"github.com/IniZio/herdr-plugin-msb/internal/core/service"
+	"github.com/IniZio/herdr-plugin-msb/internal/runtime/msb"
 )
 
 const (
@@ -466,7 +468,56 @@ func (a *Agent) Serve(ctx context.Context) error {
 	}
 }
 
-const pluginUsage = "usage: herdr-plugin-msb <command>\n\ncommands: declare  status  list  local-agent  help"
+func runFwdSync(ctx context.Context, args []string, out, errW io.Writer) int {
+	fs := flag.NewFlagSet("fwd-sync", flag.ContinueOnError)
+	fs.SetOutput(errW)
+	ctl := fs.String("control-path", "", "ssh ControlPath socket")
+	sshHost := fs.String("ssh-host", "", "ssh target (user@host)")
+	teardownName := fs.String("teardown", "", "sandbox name whose forwards to remove")
+	project := fs.String("project", service.DefaultProject, "project name")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *ctl == "" || *sshHost == "" {
+		fmt.Fprintln(errW, "fwd-sync: --control-path and --ssh-host are required")
+		return 2
+	}
+	fw := &portfwd.Forwarder{
+		ControlPath: *ctl,
+		SSHHost:     *sshHost,
+		Run:         portfwd.OSRunner,
+	}
+	mgr := portfwd.NewManager(fw)
+	rt := msb.New()
+	if *teardownName != "" {
+		svc := service.New(rt, *project)
+		ref, err := svc.Resolve(ctx, *teardownName)
+		if err != nil {
+			fmt.Fprintln(errW, err)
+			return 1
+		}
+		if err := mgr.TeardownSandbox(ctx, ref); err != nil {
+			fmt.Fprintln(errW, err)
+			return 1
+		}
+		fmt.Fprintf(out, "removed forwards for %s\n", *teardownName)
+		return 0
+	}
+	d := &portfwd.Discoverer{RT: rt}
+	desired, err := d.DiscoverAll(ctx)
+	if err != nil {
+		fmt.Fprintln(errW, err)
+		return 1
+	}
+	if err := mgr.Reconcile(ctx, desired); err != nil {
+		fmt.Fprintln(errW, err)
+		return 1
+	}
+	fmt.Fprintf(out, "synced %d listener(s)\n", len(desired))
+	return 0
+}
+
+const pluginUsage = "usage: herdr-plugin-msb <command>\n\ncommands: declare  status  list  local-agent  fwd-sync  help"
 
 func RunHerdrPlugin(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
 	if len(argv) == 0 {
@@ -482,6 +533,8 @@ func RunHerdrPlugin(ctx context.Context, argv []string, stdout, stderr io.Writer
 		return runList(ctx, argv[1:], stdout, stderr)
 	case "local-agent":
 		return runLocalAgent(ctx, argv[1:], stdout, stderr)
+	case "fwd-sync":
+		return runFwdSync(ctx, argv[1:], stdout, stderr)
 	case "help", "--help", "-h":
 		fmt.Fprintln(stdout, pluginUsage)
 		return 0
