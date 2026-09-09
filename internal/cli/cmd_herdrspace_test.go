@@ -75,6 +75,67 @@ func TestStopStartNewTab_GuestPane(t *testing.T) {
 	}
 }
 
+func TestHerdrBin(t *testing.T) {
+	t.Run("bin_path_deleted_suffix_file_exists", func(t *testing.T) {
+		f := filepath.Join(t.TempDir(), "herdr-real")
+		if err := os.WriteFile(f, []byte("x"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("HERDR_BIN_PATH", f+" (deleted)")
+		t.Setenv("HERDR_BIN", "")
+		got := herdrBin()
+		if got != f {
+			t.Fatalf("want %q, got %q", f, got)
+		}
+	})
+
+	t.Run("bin_path_deleted_suffix_file_missing", func(t *testing.T) {
+		missing := "/nonexistent/path/herdr-gone"
+		input := missing + " (deleted)"
+		t.Setenv("HERDR_BIN_PATH", input)
+		t.Setenv("HERDR_BIN", "")
+		got := herdrBin()
+		if got != input {
+			t.Fatalf("want %q (unchanged), got %q", input, got)
+		}
+	})
+
+	t.Run("bin_path_plain_no_suffix", func(t *testing.T) {
+		f := filepath.Join(t.TempDir(), "herdr-plain")
+		if err := os.WriteFile(f, []byte("x"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("HERDR_BIN_PATH", f)
+		t.Setenv("HERDR_BIN", "")
+		got := herdrBin()
+		if got != f {
+			t.Fatalf("want %q, got %q", f, got)
+		}
+	})
+
+	t.Run("neither_env_var_set", func(t *testing.T) {
+		t.Setenv("HERDR_BIN_PATH", "")
+		t.Setenv("HERDR_BIN", "")
+		got := herdrBin()
+		if got != "herdr" {
+			t.Fatalf("want %q, got %q", "herdr", got)
+		}
+	})
+
+	t.Run("herdr_bin_fallback_deleted_suffix_file_exists", func(t *testing.T) {
+		f := filepath.Join(t.TempDir(), "herdr-fallback")
+		if err := os.WriteFile(f, []byte("x"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("HERDR_BIN_PATH", "")
+		t.Setenv("HERDR_BIN", f+" (deleted)")
+		got := herdrBin()
+		if got != f {
+			t.Fatalf("want %q, got %q", f, got)
+		}
+	})
+}
+
 func TestNewTab_CorruptStore_ReturnsNonZero(t *testing.T) {
 	stateParent := t.TempDir()
 	stateDir := filepath.Join(stateParent, StateDirNS)

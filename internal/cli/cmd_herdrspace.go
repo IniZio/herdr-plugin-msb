@@ -17,12 +17,23 @@ import (
 
 func herdrBin() string {
 	if v := os.Getenv("HERDR_BIN_PATH"); v != "" {
-		return v
+		return undeletedHerdrBin(v)
 	}
 	if v := os.Getenv("HERDR_BIN"); v != "" {
-		return v
+		return undeletedHerdrBin(v)
 	}
 	return "herdr"
+}
+
+func undeletedHerdrBin(v string) string {
+	undeleted := strings.TrimSuffix(v, " (deleted)")
+	if undeleted == v {
+		return v
+	}
+	if _, err := os.Stat(undeleted); err != nil {
+		return v
+	}
+	return undeleted
 }
 
 func sandboxHandle(project, name string) string { return project + "/" + name }
