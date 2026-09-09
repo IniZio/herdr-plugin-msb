@@ -138,12 +138,17 @@ Adding the engine as an egress target opens a permanent out-of-band channel from
 the credential-holding guest. Record as closed; do not revisit without a
 containment model change.
 
-**Finding 4 — clicked-URL delivery unproven (RUN B not yet run):**
+**Finding 4 — clicked-URL delivery CONFIRMED (RUN B run 2026-09-09):**
 
 RUN A (negative control) showed `HERDR_PLUGIN_CLICKED_URL` absent and argv empty
-on a direct `herdr plugin action invoke`. RUN B (a real ctrl+click in the herdr
-TUI) has not been run. Both outcomes are designed below (§B-4). Do not implement
-Slice 7 until RUN B's outcome is known.
+on a direct `herdr plugin action invoke`. RUN B (operator ctrl+clicked
+`http://127.0.0.2:59999` in a herdr pane, 2026-09-09) confirmed the YES branch:
+`HERDR_PLUGIN_CLICKED_URL=http://127.0.0.2:59999` was present in the action's
+environment; `HERDR_PLUGIN_CONTEXT_JSON` gained `"invocation_source":"link_click"`,
+`"clicked_url":"http://127.0.0.2:59999"`, `"link_handler_id":"linkenv-probe"`;
+argv was empty in both runs. Verdict: the URL IS delivered, as the full URL (not a
+bare port), via the environment only. Two runs, opposite outcomes. Slice 7 is
+ungated; Branch A (§B-4) is the confirmed implementation path.
 
 ---
 
@@ -460,8 +465,26 @@ error entry in `forwards.state` and Screen 6.
 ### B-4. Link-handler branch — both outcomes of RUN B
 
 RUN A proved `HERDR_PLUGIN_CLICKED_URL` is absent on direct `herdr plugin action
-invoke`. RUN B (ctrl+click in a live herdr session) has not been run. Both
-branches are designed here; Slice 7 is gated on the outcome.
+invoke`. RUN B (operator ctrl+clicked `http://127.0.0.2:59999` in a herdr pane,
+2026-09-09) confirmed Branch A: the URL IS delivered via the environment. Slice 7
+is ungated; Branch A is the confirmed path. Branch B is preserved below as a
+record; it need not be implemented.
+
+Two implementation consequences from the confirmed result:
+
+(a) The action must PARSE the port out of a full URL — `HERDR_PLUGIN_CLICKED_URL`
+is `http://127.0.0.1:3000`, not `3000`; use `net/url` or split on `:`.
+
+(b) `HERDR_PLUGIN_CONTEXT_JSON` provides `"invocation_source"` — `"link_click"`
+on a ctrl+click vs. `"cli"` on direct invoke. One action can serve both paths by
+branching on `invocation_source`, without a separate verb.
+
+**UX requirement — click confirmation:** During the probe, the action wrote its
+output file silently and the operator reported the click "did nothing". Absence of
+visible feedback is not absence of firing. Any click-driven toggle MUST give
+visible confirmation — opening the pane or raising a notification — or operators
+will believe it failed. Step 4 of Branch A (call `herdr plugin pane open`) is not
+optional; never let the action return without visible output to the operator.
 
 **Branch A — URL IS delivered (RUN B confirms the env var is set):**
 
@@ -860,20 +883,23 @@ no spurious raises when master is healthy.
 
 Depends on Slice P.
 
-### Slice 7 — Port-hint from link-handler (RUN B gated)
+### Slice 7 — Port-hint from link-handler (UNGATED)
 
-Files: new `internal/cli/cmd_port_hint.go` or `cmd_open_ports_pane.go`.
+Files: new `internal/cli/cmd_port_hint.go`.
 `herdr-plugin.toml`: add `[[link_handlers]]` entry.
 
-**Do not write this slice until RUN B's outcome is known.** Then:
+RUN B (2026-09-09) confirmed Branch A. Implement Branch A (§B-4):
 
-- Branch A (URL delivered): implement §B-4 Branch A — parse URL, write hint file,
-  open pane. The `ports-pane` TUI polls hint file and pre-selects row.
-- Branch B (URL not delivered): implement §B-4 Branch B — open pane only, no
-  pre-selection.
+- Parse the port from `HERDR_PLUGIN_CLICKED_URL` (full URL, not a bare port;
+  use `net/url` or split on `:`).
+- Branch on `invocation_source` from `HERDR_PLUGIN_CONTEXT_JSON` — `"link_click"`
+  vs. `"cli"` — so one action serves both paths without a separate verb.
+- Atomically write `<state_dir>/port-hint` containing the port number.
+- Call `herdr plugin pane open --plugin herdr-plugin-msb --pane-id ports` to
+  bring the pane to focus or open it if closed.
 
-Also measure whether `{url}` argv substitution exists; require two outcomes of
-that measurement.
+Branch B need not be implemented. Argv substitution does not exist (argv was empty
+in both runs).
 
 Depends on Slice P.
 
@@ -886,7 +912,7 @@ Slice 1 (Op + Sandbox + cursor fix)
   │     ├── Slice P  (ports-pane TUI)             ← LIVE TEST required
   │     │     ├── Slice C  (space-convert)        ← LIVE TEST required
   │     │     ├── Slice N  (push on DEAD)         ← LIVE TEST + OQ-3 gated
-  │     │     └── Slice 7  (port-hint)            ← RUN B gated
+  │     │     └── Slice 7  (port-hint)            ← UNGATED (RUN B complete 2026-09-09)
   │     ├── Slice 4  (status verb rewrite)
   │     └── Slice 5  (failure visibility)
   └── Slice L  (launchd service)
@@ -894,7 +920,7 @@ Slice 1 (Op + Sandbox + cursor fix)
 
 Slices 1, W, 4, 5, L have no live-machine dependency and can proceed in parallel.
 Slices 3, P, C, N require live two-machine tests. Slice N adds an OQ-3 gate on
-top. Slice 7 adds a RUN B gate on top of Slice P.
+top. Slice 7 is ungated (RUN B complete 2026-09-09); it depends only on Slice P.
 
 ---
 
@@ -909,15 +935,11 @@ HTTP fetch — all three together. Repeat with `ServerAliveInterval` set and req
 a **different** outcome. A single run cannot distinguish a working keepalive from
 one that succeeds vacuously.
 
-**RUN B — clicked URL in a real herdr session (NOT YET RUN):**
+**RUN B — clicked URL in a real herdr session (CLOSED 2026-09-09):**
 
-RUN A (negative control) showed `HERDR_PLUGIN_CLICKED_URL` absent on direct
-action invoke. RUN B requires a ctrl+click on a URL in a live herdr TUI session.
-Measure: observe whether `HERDR_PLUGIN_CLICKED_URL` is set in the action
-process's environment; separately observe whether `{url}` argv substitution
-appears. Require both outcomes: URL delivered vs. not delivered. OQ-1 from
-portfwd-ux.md is subsumed by this measurement — they are the same probe. Governs
-Slice 7.
+RUN B was run 2026-09-09. The URL IS delivered as the full URL via
+`HERDR_PLUGIN_CLICKED_URL`; argv was empty in both runs. Branch A (§B-4) is
+confirmed. OQ-1 from portfwd-ux.md is subsumed and closed. Slice 7 is ungated.
 
 **OQ-2 is CLOSED** (Finding 2, §Basis): the laptop agent can raise a pane on the
 engine via ControlMaster. The "single biggest open question" from the prior draft

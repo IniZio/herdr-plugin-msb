@@ -32,6 +32,13 @@ issued from the server's own shell (same socket), not from a pane inside the
 remote TUI — both paths use the same server socket, so the result is
 equivalent.
 
+**Verification gap — `ports-declare` exit\_code 0 is insufficient:** `ports-declare`
+exits 0 regardless of whether it enqueued a Request. The s10c evidence proves
+reachability (the action fired) but does not prove correctness (that a Request
+entry appeared in `requests.json`). A future reverification pass must assert that
+`requests.json` gained an entry after the invoke, not merely that the process
+exited 0.
+
 **While** herdr is attached with `--remote`, the plugin **shall** make every
 action it declares reachable **without** a custom keybinding — that is, through
 `[[link_handlers]]` or through `herdr plugin action invoke` — and **shall** be

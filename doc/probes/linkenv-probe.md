@@ -4,6 +4,33 @@ Settles, with a negative control, whether herdr 0.8.0 delivers the clicked URL
 to a `[[link_handlers]]` action via the environment variable `HERDR_PLUGIN_CLICKED_URL`
 (or via argv).
 
+## RESULT — CONCLUDED 2026-09-09
+
+**Status: CONCLUDED.** Both runs have been performed and the probe is retired. The
+stanzas added in commit ab56f50 have been removed from `herdr-plugin.toml`. The
+procedure below is preserved for reproducibility; it need not be re-run.
+
+**RUN A — negative control (direct `herdr plugin action invoke`, no click):**
+- `HERDR_PLUGIN_CLICKED_URL`: ABSENT
+- `=== argv:`: EMPTY (no extra tokens)
+- `invocation_source` in `HERDR_PLUGIN_CONTEXT_JSON`: `"cli"`
+
+**RUN B — positive (operator ctrl+clicked `http://127.0.0.2:59999` in a herdr pane,
+2026-09-09):**
+- `HERDR_PLUGIN_CLICKED_URL=http://127.0.0.2:59999`: PRESENT (full URL, not a bare port)
+- `=== argv:`: EMPTY (argv is not a delivery channel)
+- `HERDR_PLUGIN_CONTEXT_JSON` gained: `"invocation_source":"link_click"`,
+  `"correlation_id":"link_click"`, `"clicked_url":"http://127.0.0.2:59999"`,
+  `"link_handler_id":"linkenv-probe"`
+
+**Verdict:** The clicked URL IS delivered, as the full URL (not a bare port), via the
+environment only — `HERDR_PLUGIN_CLICKED_URL` and `HERDR_PLUGIN_CONTEXT_JSON`. Argv is
+empty in both runs; argv is not a delivery channel. Two runs, opposite outcomes. Branch A
+of the portfwd link-handler design (doc/design/portfwd-toggle-and-status.md §B-4) is the
+confirmed implementation path.
+
+---
+
 ## Argv-substitution finding (read before running)
 
 The manifest schema for `[[link_handlers]]` exposes only `id`, `title`, `pattern`,
