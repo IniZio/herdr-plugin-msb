@@ -10,7 +10,7 @@ import (
 const combinedUsage = `usage: herdr-plugin-msb <command>
 
 sandbox:  create  ps  exec  start  stop  rm
-plugin:   declare  status  list  local-agent  fwd-sync
+plugin:   declare  status  list  local-agent  fwd-sync  wrap-herdr
 space:    space-create  space-convert  space-open-pane  new-tab  space-prune
 other:    default-shell  version  help`
 
@@ -34,6 +34,8 @@ func Run(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
 		return 0
 	case "declare", "status", "list", "local-agent", "fwd-sync":
 		return RunHerdrPlugin(ctx, argv, stdout, stderr)
+	case "wrap-herdr":
+		return RunWrapHerdr(ctx, argv[1:], stdout, stderr)
 	case "create":
 		return runCreate(ctx, argv[1:], stdout, stderr)
 	case "ps":
