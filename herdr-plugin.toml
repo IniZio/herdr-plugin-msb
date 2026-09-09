@@ -19,6 +19,12 @@ title = "Microsandbox notification"
 placement = "overlay"
 command = ["sh", "-c", "printf '%s\\n%s\\n' \"$HERDR_NOTIFY_TITLE\" \"$HERDR_NOTIFY_BODY\"; read -r _"]
 
+[[panes]]
+id = "ports"
+title = "Port forwards"
+placement = "tab"
+command = ["herdr-plugin-msb", "ports-pane"]
+
 [[actions]]
 id = "sandbox-list"
 title = "List Sandboxes"
@@ -58,6 +64,13 @@ platforms = ["linux"]
 id = "space-convert"
 title = "Convert This Workspace to a Sandbox"
 command = ["herdr-plugin-msb", "space-convert"]
+contexts = ["workspace"]
+platforms = ["linux"]
+
+[[actions]]
+id = "ports-open"
+title = "Port forwards"
+command = ["herdr", "plugin", "pane", "open", "--plugin", "herdr-plugin-msb", "--pane-id", "ports"]
 contexts = ["workspace"]
 platforms = ["linux"]
 

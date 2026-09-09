@@ -264,12 +264,21 @@ func (n *Notifier) Notify(ctx context.Context, title string, body []string) erro
 	if bin == "" {
 		bin = "herdr"
 	}
-	_, errOut, code, err := n.Run(ctx, PaneOpenArgv(bin, title, body))
+	out, errOut, code, err := n.Run(ctx, PaneOpenArgv(bin, title, body))
 	if err != nil {
 		return err
 	}
 	if code != 0 {
 		return fmt.Errorf("cli: herdr plugin pane open: exit %d: %s", code, strings.TrimSpace(errOut))
+	}
+	var resp struct {
+		Type string `json:"type"`
+	}
+	if jsonErr := json.Unmarshal([]byte(strings.TrimSpace(out)), &resp); jsonErr != nil {
+		return fmt.Errorf("cli: herdr plugin pane open: parse response: %w", jsonErr)
+	}
+	if resp.Type != "plugin_pane_opened" {
+		return fmt.Errorf("cli: herdr plugin pane open: unexpected type %q", resp.Type)
 	}
 	return nil
 }

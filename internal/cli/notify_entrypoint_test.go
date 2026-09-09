@@ -49,7 +49,7 @@ func TestNotifierPassesNotifyEntrypointArgvToRunner(t *testing.T) {
 		Run: func(_ context.Context, argv []string) (string, string, int, error) {
 			cp := append([]string(nil), argv...)
 			seen = append(seen, cp)
-			return "", "", 0, nil
+			return `{"type":"plugin_pane_opened"}`, "", 0, nil
 		},
 	}
 	if err := n.Notify(context.Background(), "ports", []string{"a", "b"}); err != nil {

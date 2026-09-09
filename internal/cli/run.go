@@ -10,7 +10,7 @@ import (
 const combinedUsage = `usage: herdr-plugin-msb <command>
 
 sandbox:  create  ps  exec  start  stop  rm
-plugin:   declare  status  list  local-agent  fwd-sync  wrap-herdr
+plugin:   declare  status  list  local-agent  fwd-sync  wrap-herdr  ports-pane
 space:    space-create  space-convert  space-open-pane  new-tab  space-prune
 other:    default-shell  version  help`
 
@@ -60,6 +60,8 @@ func Run(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
 		return runDefaultShell(ctx, argv[1:], stdout, stderr)
 	case "space-prune":
 		return runSpacePrune(ctx, argv[1:], stdout, stderr)
+	case "ports-pane":
+		return runPortsPane(ctx, argv[1:], stdout, stderr)
 	case "version":
 		return runVersion(ctx, argv[1:], stdout, stderr)
 	default:
