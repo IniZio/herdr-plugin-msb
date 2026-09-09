@@ -58,3 +58,75 @@ sandbox host is engine-03. The laptop's login shell is fish, so every remote com
 wrapped in `bash -lc '...'`. Guest reach is proven by a per-run unique marker served
 from inside the guest and read back by `curl` on the laptop — reachability alone would
 not distinguish the guest from a local loop.
+
+## Port-count ceiling sweep — 2026-09-09
+
+Question: how many ports can one sandbox publish before it degrades or fails?
+This determines whether we can publish a wide range at boot and skip all operator
+port-selection logic, or must bound the range and accept destructive-recreate for
+ports outside it.
+
+### Method
+
+Sequential `msb create --name porttest -m 512M alpine` runs with `-p N:N` repeated
+for N in a contiguous range starting at 1024 (or 20000 for smaller tests).
+Each sandbox removed before the next. Host RAM monitored throughout; abort
+threshold was 2 GiB available (never approached — minimum observed: 16.9 GiB).
+
+### Results table
+
+| Count requested | Exit | Boot ms | Listeners actually bound | libkrun RSS |
+|----------------|------|---------|--------------------------|-------------|
+| 1              | 0    | 356     | 1                        | 70 MiB      |
+| 10             | 0    | 369     | 10                       | 69 MiB      |
+| 100            | 0    | 354     | 100                      | 69 MiB      |
+| 500            | 0    | 378     | 500                      | 70 MiB      |
+| 1,000          | 0    | 369     | 1,000                    | 70 MiB      |
+| 4,000          | 0    | 391     | 4,000                    | 75 MiB      |
+| 8,000          | 0    | 411     | 7,999 (1 host conflict)  | 82 MiB      |
+| 16,000         | 0    | 510     | 15,997 (3 host conflicts)| 90 MiB      |
+| 32,000         | 0    | 637     | 31,988 (12 conflicts)    | 107 MiB     |
+| 45,000         | 0    | 721     | 44,983 (17 conflicts)    | 124 MiB     |
+| 55,000         | 0    | 774     | 54,983 (17 conflicts)    | 139 MiB     |
+| 64,512 (max)   | 0    | 768     | 64,485 (27 conflicts)    | 162 MiB     |
+
+"Conflicts" = host-side EADDRINUSE from other processes already listening on that port;
+microsandbox exited 0 in all cases and silently skipped the conflicted ports.
+
+### No ceiling found
+
+Microsandbox v0.6.17 does not fail at any tested count. The practical ceiling is
+the 16-bit TCP port space: 64,512 non-privileged ports (1024–65535) were published
+in one sandbox in 768 ms with 162 MiB RSS overhead on a 512 MiB guest.
+
+Boot time scales sub-linearly: ~360 ms at 1–1,000 ports, ~770 ms at 64,512 ports.
+RSS scales with count but modestly: 70 MiB at 1 port, 162 MiB at 64,512 ports
+(~1.4 KiB per port beyond the 70 MiB base).
+
+### Functional verification
+
+Tested at 45,000-port scale (ports 20000–64999):
+- Port 20010 (low, listener active in guest): `PONG-20010` received on host. Exit 0.
+- Port 64990 (high, listener active in guest): `PONG-64990` received on host. Exit 0.
+- Port 19999 (NOT published): `nc -z` exit 1. Negative control passed.
+- Port 65001 (NOT published): `nc -z` exit 1. Negative control passed.
+
+Tested at 64,512-port scale (ports 1024–65535):
+- Port 5050 (low, listener active in guest): `PONG-5050` received on host. Exit 0.
+- Port 65100 (high, listener active in guest): `PONG-65100` received on host. Exit 0.
+- Port 1000 (NOT published): `nc -z` exit 1. Negative control passed.
+- Port 80 (NOT published): `nc -z` exit 1. Negative control passed.
+
+NOTE on nc -z to a published-but-idle port: `nc -z` to a published port with no
+guest listener returns exit 0 because libkrun completes the host-side TCP handshake
+before discovering the guest has no listener. `nc -z` exit 1 is the reliable negative
+control only for unpublished ports. The meaningful positive control is actual data
+transfer (guest sends bytes, host receives them).
+
+### Design implication
+
+Publish a wide default range at boot — no operator port-selection required. A range
+of 20000–29999 (10,000 ports) covers practically any dev workload with 90 MiB RSS
+overhead, a 400–450 ms boot contribution, and zero destructive-recreate events for
+ports in that range. The recreate path (for a port outside the range) still exists
+but should be rare enough to be acceptable.
