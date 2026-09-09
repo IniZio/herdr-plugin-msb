@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -47,15 +48,13 @@ func guestExec(ctx context.Context, r *Runtime, ref coreruntime.SandboxRef, argv
 	return res.ExitCode, out.String()
 }
 
-func occupiedBlocks() []int {
-	var idx []int
-	for i := range rangeMaxBlocks {
-		base := rangeAllocBase + uint16(i)*rangeBlockSize
-		if rangeBlockOccupied(base) {
-			idx = append(idx, i)
-		}
+func dbOccupied(ctx context.Context, t *testing.T) [rangeMaxBlocks]bool {
+	t.Helper()
+	occ, err := daemonOccupiedBlocks(ctx)
+	if err != nil {
+		t.Fatalf("daemonOccupiedBlocks: %v", err)
 	}
-	return idx
+	return occ
 }
 
 func TestLiveRangeAllocDisjoint(t *testing.T) {
@@ -67,6 +66,9 @@ func TestLiveRangeAllocDisjoint(t *testing.T) {
 
 	_, listOut := hostRun(ctx, "msb", "list")
 	t.Logf("PROOF D0: msb list before window: %s", strings.TrimSpace(listOut))
+
+	before := dbOccupied(ctx, t)
+	t.Logf("PROOF D0b: daemon blocks occupied before: %v", before)
 
 	var ref1, ref2 coreruntime.SandboxRef
 	cleanup := func() {
@@ -90,34 +92,146 @@ func TestLiveRangeAllocDisjoint(t *testing.T) {
 		t.Fatalf("CreateAndBoot ref1: %v", err)
 	}
 
-	blocksAfter1 := occupiedBlocks()
-	t.Logf("PROOF D1: occupied block indices after sandbox 1: %v", blocksAfter1)
-	if len(blocksAfter1) != 1 {
-		t.Errorf("D1: expected 1 occupied block, got %v", blocksAfter1)
-	}
+	after1 := dbOccupied(ctx, t)
+	t.Logf("PROOF D1: daemon blocks after sandbox 1: %v", after1)
 
 	ref2, err = r2.CreateAndBoot(ctx, liveRangeSpec("ra-disj-2", 512))
 	if err != nil {
 		t.Fatalf("CreateAndBoot ref2: %v", err)
 	}
 
-	blocksAfter2 := occupiedBlocks()
-	t.Logf("PROOF D2: occupied block indices after sandbox 2: %v", blocksAfter2)
+	after2 := dbOccupied(ctx, t)
+	t.Logf("PROOF D2: daemon blocks after sandbox 2: %v", after2)
 
-	if len(blocksAfter2) != 2 {
-		t.Errorf("D3 FAIL: expected 2 distinct occupied blocks, got %v — two fresh allocators may have collided", blocksAfter2)
-	} else {
-		if blocksAfter2[0] == blocksAfter2[1] {
-			t.Errorf("D3 FAIL: both sandboxes share block %d", blocksAfter2[0])
-		} else {
-			t.Logf("PROOF D3 PASS: sandboxes occupy distinct blocks %v (separate-process simulation)", blocksAfter2)
+	occupied := []int{}
+	for i, v := range after2 {
+		if v {
+			occupied = append(occupied, i)
 		}
+	}
+	if len(occupied) != 2 {
+		t.Errorf("D3 FAIL: expected 2 distinct occupied blocks, got %v — allocators may have collided", after2)
+	} else {
+		t.Logf("PROOF D3 PASS: daemon records show distinct blocks %v (ownership-aware, derived from DB)", occupied)
 	}
 
 	cleanup()
 	ref1.Name, ref2.Name = "", ""
 	_, listOut2 := hostRun(ctx, "msb", "list")
 	t.Logf("PROOF D4: msb list after window: %s", strings.TrimSpace(listOut2))
+}
+
+func TestLiveRangeAllocSeparateProcess(t *testing.T) {
+	RequireLive(t)
+	ctx := LiveContext(t)
+
+	r1 := &Runtime{alloc: NewRangeAllocator()}
+	ref1, err := r1.CreateAndBoot(ctx, liveRangeSpec("ra-sp-1", 512))
+	if err != nil {
+		t.Fatalf("CreateAndBoot: %v", err)
+	}
+	defer func() {
+		cctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		if h, herr := r1.handle(cctx, ref1); herr == nil {
+			_ = h.Kill(cctx)
+			_ = h.Remove(cctx)
+		}
+	}()
+
+	after1 := dbOccupied(ctx, t)
+	t.Logf("PROOF SP1: block mask after sandbox 1 (process 1): %v", after1)
+
+	msbHome := os.Getenv("MSB_HOME")
+	gotest := exec.CommandContext(ctx,
+		"go", "test", "-count=1", "-v", "-run", "TestLiveRangeAllocSecondInvocation",
+		"./internal/runtime/msb/")
+	gotest.Env = append(os.Environ(), "HERDR_MSB_LIVE=1", "MSB_HOME="+msbHome)
+	gotest.Dir = "/home/newman/magic/herdr-plugin-msb"
+	out2, err2 := gotest.Output()
+	outStr := strings.TrimSpace(string(out2))
+	if err2 != nil {
+		t.Logf("subprocess stderr included in output")
+	}
+	t.Logf("PROOF SP2: separate process invocation output:\n%s", outStr)
+	if !strings.Contains(outStr, "PROOF SP2 PASS") {
+		t.Errorf("SP FAIL: second process did not log PROOF SP2 PASS — not disjoint")
+	}
+}
+
+func TestLiveRangeAllocSecondInvocation(t *testing.T) {
+	RequireLive(t)
+	ctx := LiveContext(t)
+
+	occ, err := daemonOccupiedBlocks(ctx)
+	if err != nil {
+		t.Fatalf("daemonOccupiedBlocks: %v", err)
+	}
+	t.Logf("PROOF SP2: daemon block mask at second-process startup: %v", occ)
+
+	r := &Runtime{alloc: NewRangeAllocator()}
+	base, aerr := r.alloc.Allocate(ctx, "would-be-second")
+	if aerr != nil {
+		t.Fatalf("PROOF SP2 FAIL: second-process alloc: %v", aerr)
+	}
+	if base == rangeAllocBase {
+		t.Errorf("PROOF SP2 FAIL: second process got base=%d same as first (block 0 should be occupied in DB)", base)
+	} else {
+		t.Logf("PROOF SP2 PASS: second process allocated base=%d (≠%d) — DB-derived disjoint allocation confirmed", base, rangeAllocBase)
+	}
+}
+
+func TestLiveRangeAllocOwnershipHole(t *testing.T) {
+	RequireLive(t)
+	ctx := LiveContext(t)
+
+	blocker, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", rangeAllocBase))
+	if err != nil {
+		t.Fatalf("bind port %d: %v", rangeAllocBase, err)
+	}
+	t.Logf("PROOF OH1: bound port %d (blocking base port so microsandbox skips it)", rangeAllocBase)
+
+	r := &Runtime{alloc: NewRangeAllocator()}
+	ref, err := r.CreateAndBoot(ctx, liveRangeSpec("ra-oh-1", 512))
+	blocker.Close()
+	t.Logf("PROOF OH2: released blocker on port %d after create", rangeAllocBase)
+
+	if err != nil {
+		t.Fatalf("CreateAndBoot: %v", err)
+	}
+	defer func() {
+		cctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		if h, herr := r.handle(cctx, ref); herr == nil {
+			_ = h.Kill(cctx)
+			_ = h.Remove(cctx)
+		}
+	}()
+
+	tcpFree := !rangeBlockOccupied(rangeAllocBase)
+	t.Logf("PROOF OH3: TCP-probe says port %d is free=%v (would cause false 'block unoccupied' with old design)", rangeAllocBase, tcpFree)
+
+	occ, err := daemonOccupiedBlocks(ctx)
+	if err != nil {
+		t.Fatalf("daemonOccupiedBlocks: %v", err)
+	}
+	t.Logf("PROOF OH4: daemon-derived block mask: %v", occ)
+	if !occ[0] {
+		t.Errorf("OH FAIL: daemon shows block 0 free even though sandbox ra-oh-1 has ports there — DB query may be wrong")
+	} else {
+		t.Logf("PROOF OH4 PASS: daemon correctly shows block 0 occupied despite port %d being free (TCP-probe would give wrong answer here)", rangeAllocBase)
+	}
+
+	r2 := &Runtime{alloc: NewRangeAllocator()}
+	base2, aerr := r2.alloc.Allocate(ctx, "sra--ra-oh-would-be-second")
+	if aerr != nil {
+		t.Fatalf("second alloc: %v", aerr)
+	}
+	if base2 == rangeAllocBase {
+		t.Errorf("OH FAIL: second allocator returned base=%d — ownership hole NOT fixed; would collide with ra-oh-1", rangeAllocBase)
+	} else {
+		t.Logf("PROOF OH5 PASS: second allocator got base=%d (≠%d) — ownership hole correctly closed by DB-derived occupancy", base2, rangeAllocBase)
+	}
 }
 
 func TestLiveRangeAllocDataTransfer(t *testing.T) {
@@ -195,10 +309,10 @@ func TestLiveRangeAllocBlockLifecycle(t *testing.T) {
 		}
 	})
 
-	liveBlocks := occupiedBlocks()
-	t.Logf("PROOF L1: sandbox live, occupied block indices=%v", liveBlocks)
-	if len(liveBlocks) != 1 {
-		t.Errorf("L1: expected 1 occupied block, got %v", liveBlocks)
+	liveBlocks := dbOccupied(ctx, t)
+	t.Logf("PROOF L1: daemon block mask (sandbox live): %v", liveBlocks)
+	if !liveBlocks[0] {
+		t.Errorf("L1: block 0 not occupied in daemon DB — unexpected")
 	}
 
 	r2 := &Runtime{alloc: NewRangeAllocator()}
@@ -224,9 +338,9 @@ func TestLiveRangeAllocBlockLifecycle(t *testing.T) {
 	if aerr3 != nil {
 		t.Fatalf("PROOF L3 FAIL: alloc after remove: %v", aerr3)
 	}
-	t.Logf("PROOF L3: after remove, fresh alloc got base=%d (want %d — block freed in kernel)", base3, rangeAllocBase)
+	t.Logf("PROOF L3: after remove, fresh alloc got base=%d (want %d — DB entry removed)", base3, rangeAllocBase)
 	if base3 != rangeAllocBase {
-		t.Errorf("L3 FAIL: after remove, expected base=%d, got %d — kernel ports not released", rangeAllocBase, base3)
+		t.Errorf("L3 FAIL: after remove, expected base=%d, got %d — DB entry not cleared", rangeAllocBase, base3)
 	}
 }
 
