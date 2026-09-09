@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/IniZio/herdr-plugin-msb/internal/core/herdrspace"
+	"github.com/IniZio/herdr-plugin-msb/internal/core/service"
 )
 
 const defaultShellSentinel = "HERDR_MSB_DEFAULT_SHELL_ACTIVE"
@@ -49,6 +50,15 @@ func defaultShellDecide(
 		return dsDecision{}
 	}
 	return dsDecision{useGuest: true, project: project, sandbox: name}
+}
+
+func guestShellArgv(plugin, project, sandbox, guestShell string) []string {
+	cdScript := "cd " + service.DefaultGuestWorktree + " 2>/dev/null || cd /; exec \"$0\" \"$@\""
+	argv := []string{plugin, "exec", "-pty", "-project", project, sandbox, "--", "/bin/sh", "-c", cdScript, guestShell}
+	if strings.HasSuffix(guestShell, "bash") {
+		argv = append(argv, "-l")
+	}
+	return argv
 }
 
 func runDefaultShell(ctx context.Context, _ []string, _ io.Writer, errW io.Writer) int {
@@ -95,10 +105,7 @@ func runDefaultShell(ctx context.Context, _ []string, _ io.Writer, errW io.Write
 		}
 	}
 
-	argv := []string{plugin, "exec", "-pty", "-project", dec.project, dec.sandbox, "--", guestShell}
-	if strings.HasSuffix(guestShell, "bash") {
-		argv = append(argv, "-l")
-	}
+	argv := guestShellArgv(plugin, dec.project, dec.sandbox, guestShell)
 
 	env := append(os.Environ(), defaultShellSentinel+"=1")
 	if execErr := syscall.Exec(plugin, argv, env); execErr != nil {

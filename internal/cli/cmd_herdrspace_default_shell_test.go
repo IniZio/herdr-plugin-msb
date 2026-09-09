@@ -6,9 +6,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/IniZio/herdr-plugin-msb/internal/core/herdrspace"
+	"github.com/IniZio/herdr-plugin-msb/internal/core/service"
 )
 
 func writeTestBindings(t *testing.T, dir string, bs []herdrspace.Binding) {
@@ -19,6 +21,54 @@ func writeTestBindings(t *testing.T, dir string, bs []herdrspace.Binding) {
 	}
 	if err := os.WriteFile(filepath.Join(dir, "herdr-space-bindings.json"), data, 0600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestGuestShellArgv(t *testing.T) {
+	cases := []struct {
+		shell   string
+		wantL   bool
+	}{
+		{"/bin/bash", true},
+		{"/usr/bin/bash", true},
+		{"/bin/sh", false},
+		{"/usr/bin/zsh", false},
+	}
+	for _, tc := range cases {
+		argv := guestShellArgv("/plugin", "proj", "box", tc.shell)
+		if len(argv) < 11 {
+			t.Fatalf("shell=%s: argv too short: %v", tc.shell, argv)
+		}
+		if argv[7] != "/bin/sh" {
+			t.Errorf("shell=%s: argv[7] want /bin/sh, got %s", tc.shell, argv[7])
+		}
+		if argv[8] != "-c" {
+			t.Errorf("shell=%s: argv[8] want -c, got %s", tc.shell, argv[8])
+		}
+		cdScript := argv[9]
+		if !strings.Contains(cdScript, "cd "+service.DefaultGuestWorktree) {
+			t.Errorf("shell=%s: cd script missing cd %s: %s", tc.shell, service.DefaultGuestWorktree, cdScript)
+		}
+		if !strings.Contains(cdScript, "|| cd /") {
+			t.Errorf("shell=%s: cd script missing fallback: %s", tc.shell, cdScript)
+		}
+		if argv[10] != tc.shell {
+			t.Errorf("shell=%s: $0 want %s, got %s", tc.shell, tc.shell, argv[10])
+		}
+		if strings.Contains(cdScript, tc.shell) {
+			t.Errorf("shell=%s: guest shell must not be embedded in -c string", tc.shell)
+		}
+		if tc.wantL {
+			if len(argv) < 12 || argv[11] != "-l" {
+				t.Errorf("shell=%s: want -l in $@, argv=%v", tc.shell, argv)
+			}
+		} else {
+			for _, a := range argv[11:] {
+				if a == "-l" {
+					t.Errorf("shell=%s: unexpected -l in argv=%v", tc.shell, argv)
+				}
+			}
+		}
 	}
 }
 

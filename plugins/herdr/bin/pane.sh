@@ -24,9 +24,14 @@ case "$1" in
             GUEST_SHELL=/bin/sh
         fi
 
+        GUEST_CWD="${HERDR_MSB_GUEST_CWD:-/workspace}"
         case "$GUEST_SHELL" in
-            */bash) exec "$PLUGIN" exec -pty -project "$PROJECT" "$SANDBOX" -- "$GUEST_SHELL" -l ;;
-            *)      exec "$PLUGIN" exec -pty -project "$PROJECT" "$SANDBOX" -- "$GUEST_SHELL" ;;
+            */bash) exec "$PLUGIN" exec -pty -project "$PROJECT" "$SANDBOX" -- \
+                        /bin/sh -c 'cd '"$GUEST_CWD"' 2>/dev/null || cd /; exec "$0" "$@"' \
+                        "$GUEST_SHELL" -l ;;
+            *)      exec "$PLUGIN" exec -pty -project "$PROJECT" "$SANDBOX" -- \
+                        /bin/sh -c 'cd '"$GUEST_CWD"' 2>/dev/null || cd /; exec "$0" "$@"' \
+                        "$GUEST_SHELL" ;;
         esac
         ;;
     *)
