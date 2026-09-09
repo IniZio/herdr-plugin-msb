@@ -23,6 +23,36 @@ func TestFwdSyncDispatch(t *testing.T) {
 	}
 }
 
+func TestPresentWiredInWriteAppliedState(t *testing.T) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "cmd_herdr_plugin.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parse cmd_herdr_plugin.go: %v", err)
+	}
+	var body *ast.BlockStmt
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Name.Name != "writeAppliedState" {
+			continue
+		}
+		body = fn.Body
+	}
+	if body == nil {
+		t.Fatalf("writeAppliedState not found in cmd_herdr_plugin.go")
+	}
+	found := false
+	ast.Inspect(body, func(n ast.Node) bool {
+		sel, ok := n.(*ast.SelectorExpr)
+		if ok && sel.Sel.Name == "Present" {
+			found = true
+		}
+		return true
+	})
+	if !found {
+		t.Error("writeAppliedState: Present not called; wiring was removed")
+	}
+}
+
 func TestPortfwdWiringGuard(t *testing.T) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "cmd_herdr_plugin.go", nil, 0)

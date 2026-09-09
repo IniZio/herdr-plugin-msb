@@ -466,6 +466,22 @@ func (a *Agent) Serve(ctx context.Context) error {
 	}
 }
 
+func writeAppliedState(ctx context.Context, stateDir string, fw *portfwd.Forwarder, mgr *portfwd.Manager) {
+	entries := mgr.Applied()
+	fwds := make([]PortForward, 0, len(entries))
+	for _, e := range entries {
+		pf := PortForward{Port: e.Port, Sandbox: e.SandboxID, Status: PFStatusPending}
+		if ok, _ := fw.Present(ctx, e.Port); ok {
+			pf.Status = PFStatusLive
+			pf.ConfirmedAt = time.Now()
+		}
+		fwds = append(fwds, pf)
+	}
+	sort.Slice(fwds, func(i, j int) bool { return fwds[i].Port < fwds[j].Port })
+	s := &ForwardsState{WrittenBy: "fwd-sync", UpdatedAt: time.Now(), Forwards: fwds}
+	_ = WriteForwardsStateAtomic(stateDir, s)
+}
+
 func runFwdSync(ctx context.Context, args []string, out, errW io.Writer) int {
 	fs := flag.NewFlagSet("fwd-sync", flag.ContinueOnError)
 	fs.SetOutput(errW)
@@ -480,6 +496,7 @@ func runFwdSync(ctx context.Context, args []string, out, errW io.Writer) int {
 		fmt.Fprintln(errW, "fwd-sync: --control-path and --ssh-host are required")
 		return 2
 	}
+	stateDir, stateDirErr := StateDir(os.Getenv)
 	fw := &portfwd.Forwarder{
 		ControlPath: *ctl,
 		SSHHost:     *sshHost,
@@ -498,6 +515,9 @@ func runFwdSync(ctx context.Context, args []string, out, errW io.Writer) int {
 			fmt.Fprintln(errW, err)
 			return 1
 		}
+		if stateDirErr == nil {
+			writeAppliedState(ctx, stateDir, fw, mgr)
+		}
 		fmt.Fprintf(out, "removed forwards for %s\n", *teardownName)
 		return 0
 	}
@@ -510,6 +530,9 @@ func runFwdSync(ctx context.Context, args []string, out, errW io.Writer) int {
 	if err := mgr.Reconcile(ctx, desired); err != nil {
 		fmt.Fprintln(errW, err)
 		return 1
+	}
+	if stateDirErr == nil {
+		writeAppliedState(ctx, stateDir, fw, mgr)
 	}
 	fmt.Fprintf(out, "synced %d listener(s)\n", len(desired))
 	return 0
