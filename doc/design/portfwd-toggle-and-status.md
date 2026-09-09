@@ -166,9 +166,19 @@ name      = "Stop port forward"
 command   = ["herdr-plugin-msb", "unforward", "-port", ""]
 ```
 
-The operator is prompted for the port number (herdr's standard action argument
-prompt). This is deliberately a typed gesture: accidental unforward is worse
-than the friction of one keypress.
+> **RETRACTED — this mechanism does not exist.** The claim that the operator "is
+> prompted for the port number (herdr's standard action argument prompt)" was never
+> verified and is false. `herdr plugin action invoke` accepts only `--plugin` and a
+> positional `<ACTION_ID>`; the `[[actions]]` schema carries only `id`, `title`,
+> `command`, `contexts`, `platforms` — no parameter, prompt, or substitution field.
+> An action fires its fixed `command` array verbatim and solicits no operator input.
+> Actions are also strictly static: there is no runtime registration, so a per-port
+> "Unforward 3000" menu entry is not expressible either.
+>
+> The operator has additionally ruled out typed CLI gestures entirely. Both the verb
+> above and this menu entry are therefore superseded — see the revised design for the
+> pane-TUI approach, which is the only surface that carries a per-port toggle without
+> a herdr capability that does not exist.
 
 #### Link-handler toggle (OQ-1 gated)
 
