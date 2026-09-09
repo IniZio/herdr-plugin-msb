@@ -21,7 +21,8 @@ const (
 )
 
 type Runtime struct {
-	acct admission.Accountant
+	acct  admission.Accountant
+	alloc *RangeAllocator
 }
 
 var _ coreruntime.Runtime = (*Runtime)(nil)
@@ -109,7 +110,9 @@ func SandboxOptions(spec coreruntime.SandboxSpec) []msbsdk.SandboxOption {
 		}
 		opts = append(opts, msbsdk.WithMounts(mounts))
 	}
-	if len(spec.Ports) > 0 {
+	if spec.PortMap != nil {
+		opts = append(opts, msbsdk.WithPorts(spec.PortMap))
+	} else if len(spec.Ports) > 0 {
 		opts = append(opts, msbsdk.WithPorts(coreruntime.SamePortMap(spec.Ports)))
 	}
 	opts = append(opts, msbsdk.WithNetwork(networkConfig(spec.NetRules)))
@@ -198,6 +201,13 @@ func (r *Runtime) CreateAndBoot(ctx context.Context, spec coreruntime.SandboxSpe
 	if err := admission.Admit(ctx, r.accountant(), spec.MemoryMiB); err != nil {
 		return coreruntime.SandboxRef{}, err
 	}
+	if r.alloc != nil {
+		hostBase, aerr := r.alloc.Allocate(name)
+		if aerr != nil {
+			return coreruntime.SandboxRef{}, fmt.Errorf("msb: rangealloc %q: %w", name, aerr)
+		}
+		spec.PortMap = blockPortMap(hostBase)
+	}
 	opts := append(SandboxOptions(spec), msbsdk.WithDetached())
 	sb, err := msbsdk.CreateSandbox(ctx, name, opts...)
 	if err != nil {
@@ -223,6 +233,9 @@ func (r *Runtime) Remove(ctx context.Context, ref coreruntime.SandboxRef) error 
 	}
 	if err := h.Remove(ctx); err != nil {
 		return fmt.Errorf("msb: remove %q: %w", h.Name(), err)
+	}
+	if r.alloc != nil {
+		r.alloc.Free(h.Name())
 	}
 	return nil
 }

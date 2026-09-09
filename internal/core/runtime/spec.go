@@ -20,6 +20,7 @@ type SandboxSpec struct {
 	Mounts       []Mount
 	NetRules     []NetRule
 	Ports        []uint16
+	PortMap      map[uint16]uint16
 }
 
 type SandboxRef struct {
