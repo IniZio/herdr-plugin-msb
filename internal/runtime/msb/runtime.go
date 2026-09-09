@@ -201,11 +201,13 @@ func (r *Runtime) CreateAndBoot(ctx context.Context, spec coreruntime.SandboxSpe
 	if err := admission.Admit(ctx, r.accountant(), spec.MemoryMiB); err != nil {
 		return coreruntime.SandboxRef{}, err
 	}
+	var allocatedBase uint16
 	if r.alloc != nil {
-		hostBase, aerr := r.alloc.Allocate(name)
+		hostBase, aerr := r.alloc.Allocate(ctx, name)
 		if aerr != nil {
 			return coreruntime.SandboxRef{}, fmt.Errorf("msb: rangealloc %q: %w", name, aerr)
 		}
+		allocatedBase = hostBase
 		spec.PortMap = blockPortMap(hostBase)
 	}
 	opts := append(SandboxOptions(spec), msbsdk.WithDetached())
@@ -222,6 +224,11 @@ func (r *Runtime) CreateAndBoot(ctx context.Context, spec coreruntime.SandboxSpe
 	}
 	if perr := assertNetworkPolicy(ctx, h); perr != nil {
 		return coreruntime.SandboxRef{}, errors.Join(perr, teardownHandle(ctx, h))
+	}
+	if r.alloc != nil && allocatedBase > 0 {
+		if cerr := r.alloc.CheckCollision(ctx, name, allocatedBase); cerr != nil {
+			return coreruntime.SandboxRef{}, errors.Join(cerr, teardownHandle(ctx, h))
+		}
 	}
 	return refFromHandle(h), nil
 }
