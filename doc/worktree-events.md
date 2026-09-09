@@ -28,7 +28,19 @@ sandbox: creation needs an image ref and stays the operator-driven `space-conver
 
 `plugins/herdr/bin/on-worktree-removed.sh` — logs the event, then invokes
 
-    herdr-plugin-msb space-prune --apply --workspace "$WS_ID"
+    herdr-plugin-msb space-prune --apply --kill-running --workspace "$WS_ID"
+
+**The hook destroys in-flight work inside that guest, without confirmation.**
+`--kill-running` means the reclaim does not stop at a RUNNING sandbox: whatever is
+executing in the guest — an agent mid-task, an unfinished build, uncommitted files that
+live only in the guest — is killed and the sandbox is removed, with no prompt and no
+recovery. This is the accepted trade, decided by the operator: `herdr worktree remove`
+is an explicit operator action on that worktree, and reclaiming the worktree's sandbox is
+the intended consequence of it. Anything inside a worktree-bound sandbox that must
+survive has to be pushed out of the guest before the worktree is removed. The blast
+radius is bounded by `--workspace "$WS_ID"` — only bindings for the removed worktree's
+workspace are considered — and by the two-signal strand rule in §3.1, which still applies
+in full: `--kill-running` waives only the running-status refusal, never the strand test.
 
 The `[[events]]` manifest entries pointing at both scripts were written by slice s51 and
 were not modified here.
@@ -162,6 +174,24 @@ reclaims nothing in the only case that matters. Reclamation is now remove, then 
 stop, then remove again (`pruneReclaim`). If the stop also fails, both errors surface and
 the binding is **kept**, so a sandbox that could not be reclaimed does not lose its record.
 
+Read `pruneReclaim` (`internal/cli/cmd_herdrspace_prune.go:76-86`) for the exact order; it
+is remove-first, and the stop is a fallback that runs only on a failed remove:
+
+    err := pruneRemoveSandbox(ctx, project, name)   // attempted unconditionally, first
+    if err == nil { return nil }                    // a stopped sandbox removes on the first try
+    if stopErr := pruneStopSandbox(...); stopErr != nil { return ...both errors... }
+    return pruneRemoveSandbox(ctx, project, name)   // retry, after the stop
+
+Commit ef65343's message says reclaim "stops a running sandbox before removing it". That
+is **wrong** and the commit message cannot be edited, so the correction is recorded here:
+nothing is stopped before the first remove attempt, and a sandbox that is not running is
+removed without ever being stopped. The distinction is observable — a stop is issued only
+on the failure path, so a successful first remove leaves no stop in the msb logs.
+
+The status probe in §3.4 is a separate, earlier step at the call site
+(`cmd_herdrspace_prune.go:148-159`), not part of `pruneReclaim`. It decides whether the
+reclaim is attempted at all; it does not stop anything.
+
 Re-run after the fix, same binary, two opposite outcomes:
 
     $ ./herdr-plugin-msb space-prune --apply --workspace w8
@@ -200,11 +230,70 @@ acceptable. Two runs against a real running sandbox, same binary:
     space-prune: reclaimed herdr/s56probe workspace=w56DEAD reason=workspace-gone+worktree-gone:/home/newman/magic/does-not-exist-s56
     space-prune: considered=1 reclaimable=1 applied=1 apply=true      (exit 0, sandbox gone from msb list)
 
-Consequence for the hook in §2: `on-worktree-removed.sh` passes neither `--kill-running`
-nor anything else new, so the hook path now **refuses** a running sandbox and exits 1
-instead of reclaiming it. That is the safe direction, but it means the hook no longer
-completes the reclaim on its own for the case it was written for. Deciding whether the
-hook should carry `--kill-running` is a separate change to a file this slice does not own.
+Consequence for the hook in §2, and the operator decision that settled it:
+
+Between s56 and this slice, `on-worktree-removed.sh` passed `--apply --workspace` only.
+A stranded sandbox is running by definition (§3.3), so the hook **refused** every sandbox
+it was written to reclaim, logged `space-prune=done rc=1`, and reclaimed nothing. That is
+a safe failure, but it is a failure: it left exactly the stranded, RAM-holding sandbox the
+hook exists to remove.
+
+The hook now passes `--kill-running` (§2). The operator's reasoning: `herdr worktree
+remove` is a deliberate, hand-driven act on that worktree, and destroying the worktree's
+sandbox is its intended consequence — so the guest's in-flight work is forfeit, without
+confirmation. Read §2 before relying on this.
+
+`--kill-running` on the hook waives the running-status refusal in this section only. It
+does not touch the other two refusals: the two-signal strand rule (§3.1) and the
+`no-checkout-path-recorded` keep (§3.1 rule 5) both still hold, and the hook still always
+scopes to one `--workspace`, so it can never sweep (§3.2). The operator's demo binding
+(`msb:eyeball` -> `herdr/eyeball`, workspace `w8E`) records no checkout path and is
+therefore kept whatever flags are passed.
+
+### 3.5 The lifecycle, proven end to end
+
+Until this slice every part of the reclaim path had been proven separately and the whole
+had never run. The one real hook firing on record logged
+`space-prune=done rc=2 output=... unknown command "space-prune"`: the binary the hook
+resolves predated the verb, so the lifecycle had never once completed. `make install`
+fixes that, and the plugin is registered with `plugin_root` = this repo
+(`~/.config/herdr/plugins.json`), so the hook runs the repo's script and the repo's binary
+— `make build` and `make install` both matter.
+
+Two full runs on throwaway worktrees, differing only in whether the hook passed
+`--kill-running`, each with a real 1 GiB `alpine` guest that was RUNNING at removal time:
+
+| run | hook argv | events-log line | `msb list` after |
+|---|---|---|---|
+| negative | `space-prune --apply --workspace w8S` | `rc=1 output=space-prune: refusing to reclaim RUNNING sandbox herdr/s57probe3 workspace=w8S (pass --kill-running ...)` / `considered=1 reclaimable=1 applied=0` | `herdr--s57probe3` still running |
+| positive | `space-prune --apply --kill-running --workspace w8R` | `rc=0 output=space-prune: reclaimed herdr/s57probe2 workspace=w8R reason=workspace-gone+worktree-gone:<path>` / `considered=1 reclaimable=1 applied=1` | gone |
+
+In the positive run nothing removed the sandbox by hand: the only commands issued were
+`herdr worktree create`, `space-convert`, and `herdr worktree remove --force`. herdr's own
+`herdr plugin log list` records that invocation of `plugins/herdr/bin/on-worktree-removed.sh`
+as `exit_code: 0, status: succeeded`, and the binding disappeared from
+`herdr-space-bindings.json`. The operator's `msb:eyeball` binding was `keep
+reason=no-checkout-path-recorded` in the dry run before and after.
+
+### 3.6 A replaced herdr binary broke the hook, and how
+
+The first end-to-end attempt failed a second way, and only the live run could have found
+it:
+
+    space-prune=done rc=1 output=herdr workspace list: fork/exec /home/newman/.local/bin/herdr (deleted): no such file or directory
+
+`herdr` had been upgraded while the server process kept running, so the server's
+`/proc/self/exe` reads `/home/newman/.local/bin/herdr (deleted)` — the kernel's suffix for
+an unlinked inode — and that literal string reaches the hook as `HERDR_BIN_PATH`.
+`space-prune` needs `herdr workspace list` for signal A (§3.1), so the workspace probe
+failed, and by rule the verb then reclaims **nothing** and exits 1. The failure was safe
+and completely opaque.
+
+`herdrBin` now strips a trailing ` (deleted)` and uses the stripped path **only if that
+path exists**; otherwise the value is returned untouched, so a genuinely wrong
+`HERDR_BIN_PATH` still fails loudly instead of silently resolving elsewhere. Confirmed by
+observation, not inference: `readlink /proc/<herdr-server-pid>/exe` printed the `(deleted)`
+suffix while a freshly started `herdr` process printed the clean path.
 
 ## 4. Limitation: only herdr-driven removals fire the hook
 

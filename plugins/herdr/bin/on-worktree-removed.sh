@@ -53,7 +53,7 @@ if [ -z "$PLUGIN" ]; then
 fi
 
 set +e
-PRUNE_OUT=$("$PLUGIN" space-prune --apply --workspace "$WS_ID" 2>&1)
+PRUNE_OUT=$("$PLUGIN" space-prune --apply --kill-running --workspace "$WS_ID" 2>&1)
 PRUNE_RC=$?
 set -e
 

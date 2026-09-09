@@ -58,7 +58,7 @@ func goneCheckoutPath(t *testing.T) string {
 	return filepath.Join(t.TempDir(), "worktree-removed")
 }
 
-func TestSpacePrune_StopsRunningSandboxBeforeRemove(t *testing.T) {
+func TestSpacePrune_RemoveFirstThenStopAndRetryRemove(t *testing.T) {
 	dir := pruneStateDir(t)
 	pruneAddBinding(t, dir, herdrspace.Binding{SpaceLabel: "lblR", HerdrWorkspaceID: "wxR", SandboxHandle: "herdr/running", CheckoutPath: goneCheckoutPath(t)})
 
