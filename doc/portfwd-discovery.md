@@ -58,3 +58,78 @@ re-query for ownership.
 Splitting on the **last** `:` handles all four forms unambiguously. A loopback
 bind still forwards correctly via the vsock exec channel, but callers need to
 know the bind scope, so `BindAddr` is preserved in `Listener`.
+
+## D-24 proc-based discovery (supersedes netstat)
+
+### Why /proc/net/tcp instead of netstat
+
+`netstat` requires net-tools in the guest image. A distroless or minimal image
+ships neither `netstat` nor `ss`. `/proc/net/tcp` is part of the Linux kernel
+virtual filesystem and is present in every Linux guest regardless of userland.
+The exec path (`sh -c "cat /proc/net/tcp /proc/net/tcp6 2>/dev/null"`) has no
+dependency on any installed binary beyond `sh`, which every image that runs a
+`cmd` has.
+
+### /proc/net/tcp address byte-order
+
+Each entry in `/proc/net/tcp` has the form:
+```
+sl  local_address           rem_address  st ...
+ 0: 0100007F:0BB8  00000000:0000  0A ...
+```
+
+The address field `0100007F` is `sin_addr.s_addr` printed with `%08X` as a
+native 32-bit integer on the host. On a little-endian (x86) machine, the
+network-order address `127.0.0.1 = 0x7F000001` is stored in memory as bytes
+`[7F, 00, 00, 01]` but read by the CPU as `0x0100007F` — the byte-reversed
+value. To recover the correct IP, extract bytes as `[byte(v), byte(v>>8),
+byte(v>>16), byte(v>>24)]`, which yields `[0x7F, 0x00, 0x00, 0x01]` = 127.0.0.1.
+
+A naive big-endian parse of `0100007F` gives `1.0.0.127` (wrong). Both parse
+paths are exercised in `TestParseProcNetTCP_ByteOrder` with the opposite outcome
+asserted as a negative control.
+
+The port field (`0BB8` = 3000) is already in host order via `ntohs()` and is
+parsed directly.
+
+For `/proc/net/tcp6`, the 128-bit address is four consecutive little-endian
+32-bit words (32 hex chars total). The same byte-extraction applies to each
+word to produce the 16-byte IPv6 address.
+
+### Reserved-set rationale
+
+The filter (`FilterListeners`) classifies listeners into three buckets:
+
+| Bucket | Condition | Action |
+|---|---|---|
+| Reserved | port < 1024 or in operator exclude list | never forwarded |
+| OutOfRange | port > 11023 (outside the 10k guest block) | reported distinctly; forwarding requires sandbox recreate |
+| Forwardable | port in [1024, 11023] and not reserved | forwarded |
+
+Ports below 1024 are privileged; nothing a dev server binds there would be
+intentional in this context. The operator exclude list accommodates custom
+control ports (e.g. a local proxy or health endpoint the operator does not want
+exposed). The Linux ephemeral range (32768-60999) is NOT excluded — VS Code's
+Remote Containers spec excludes nothing there, and a dev server can legitimately
+bind to an ephemeral port via `SO_REUSEPORT` or explicit bind.
+
+The plugin has no fixed guest control ports of its own: `msb exec` uses the SDK
+FFI vsock channel, not a guest-side listening socket. No plugin-specific port
+reservation was found in the codebase; none is added here.
+
+### Out-of-range port reporting
+
+A listener on a guest port above 11023 cannot be forwarded without tearing down
+and recreating the sandbox (the 10k host-port block is allocated at create time
+and cannot grow). `FilterResult.OutOfRange` surfaces these distinctly so the
+layer above can decide whether to offer a recreate or warn the user. Silently
+dropping them would make a dev server on a high port appear simply broken.
+
+### Per-port teardown
+
+`Manager.Reconcile` tracks applied forwards as `(sandboxID, port)` pairs. On
+each reconcile the full desired set of pairs is compared against the applied set.
+Any pair absent from the desired set triggers `Forwarder.Cancel`, even if the
+sandbox itself remains running. This ensures a port that stops listening
+immediately loses its forward on the next poll cycle — the forward does not
+survive until sandbox stop.
