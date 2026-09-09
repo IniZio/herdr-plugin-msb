@@ -26,6 +26,25 @@ func OSRunner(ctx context.Context, argv []string) (string, string, int, error) {
 	return outBuf.String(), errBuf.String(), code, runErr
 }
 
+// MasterArgv returns the canonical ssh -M argv for opening a control master.
+// Both Agent (local-agent path) and Forwarder (fwd-sync path) use this so
+// their masters are indistinguishable and a liveness check on one socket
+// never triggers a redundant second master.
+func MasterArgv(target, controlPath string) []string {
+	return []string{
+		"ssh", "-M", "-N", "-f",
+		"-o", "ControlPath=" + controlPath,
+		"-o", "ControlMaster=auto",
+		"-o", "ControlPersist=yes",
+		"-o", "BatchMode=yes",
+		"-o", "GatewayPorts=no",
+		"-o", "ConnectTimeout=10",
+		"-o", "ServerAliveInterval=15",
+		"-o", "ServerAliveCountMax=3",
+		target,
+	}
+}
+
 type Forwarder struct {
 	ControlPath string
 	SSHHost     string
@@ -65,17 +84,7 @@ func (f *Forwarder) EnsureMaster(ctx context.Context) error {
 	if _, statErr := os.Stat(f.ControlPath); statErr == nil {
 		_ = os.Remove(f.ControlPath)
 	}
-	masterArgv := []string{
-		"ssh", "-M", "-N", "-f",
-		"-o", "ControlMaster=yes",
-		"-o", "ControlPath=" + f.ControlPath,
-		"-o", "ControlPersist=60",
-		"-o", "BatchMode=yes",
-		"-o", "ExitOnForwardFailure=yes",
-		"-o", "StrictHostKeyChecking=no",
-		"-o", "ConnectTimeout=10",
-		f.SSHHost,
-	}
+	masterArgv := MasterArgv(f.SSHHost, f.ControlPath)
 	_, masterStderr, code, err := f.Run(ctx, masterArgv)
 	if err != nil {
 		return err

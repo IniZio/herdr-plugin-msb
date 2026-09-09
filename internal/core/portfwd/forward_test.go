@@ -106,17 +106,7 @@ func TestEnsureMasterWhenDead(t *testing.T) {
 	if len(calls) != 2 {
 		t.Fatalf("dead master: want 2 calls, got %d", len(calls))
 	}
-	wantOpen := []string{
-		"ssh", "-M", "-N", "-f",
-		"-o", "ControlMaster=yes",
-		"-o", "ControlPath=" + testSock,
-		"-o", "ControlPersist=60",
-		"-o", "BatchMode=yes",
-		"-o", "ExitOnForwardFailure=yes",
-		"-o", "StrictHostKeyChecking=no",
-		"-o", "ConnectTimeout=10",
-		testHost,
-	}
+	wantOpen := MasterArgv(testHost, testSock)
 	if !argvEq(calls[1], wantOpen) {
 		t.Fatalf("open master argv\n got  %v\n want %v", calls[1], wantOpen)
 	}
@@ -349,5 +339,65 @@ func TestEnsureMasterLiveSocketNotUnlinked(t *testing.T) {
 	}
 	if len(calls) != 1 {
 		t.Fatalf("want 1 call (check only), got %d", len(calls))
+	}
+}
+
+func TestMasterArgv_CanonicalForm(t *testing.T) {
+	got := MasterArgv("user@host", "/run/ctl")
+	wantContains := []string{
+		"ssh", "-M", "-N", "-f",
+		"ControlPath=/run/ctl",
+		"ControlPersist=yes",
+		"BatchMode=yes",
+		"GatewayPorts=no",
+		"ConnectTimeout=10",
+		"ServerAliveInterval=15",
+		"ServerAliveCountMax=3",
+		"user@host",
+	}
+	for _, want := range wantContains {
+		found := false
+		for _, a := range got {
+			if a == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("MasterArgv: missing %q in %v", want, got)
+		}
+	}
+	last := got[len(got)-1]
+	if last != "user@host" {
+		t.Fatalf("MasterArgv: target must be last arg, got %q", last)
+	}
+}
+
+func TestForwarderEnsureMasterUsesCanonicalArgv(t *testing.T) {
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "test.ctl")
+	var capturedArgv []string
+	callN := 0
+	f := &Forwarder{
+		ControlPath: sock,
+		SSHHost:     "user@host",
+		Run: func(_ context.Context, argv []string) (string, string, int, error) {
+			callN++
+			if callN == 1 {
+				return "", "", 255, nil
+			}
+			capturedArgv = append([]string(nil), argv...)
+			return "", "", 0, nil
+		},
+	}
+	if err := f.EnsureMaster(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if capturedArgv == nil {
+		t.Fatal("EnsureMaster: no master spawn call captured")
+	}
+	want := MasterArgv("user@host", sock)
+	if !argvEq(capturedArgv, want) {
+		t.Fatalf("EnsureMaster argv\n got  %v\n want %v", capturedArgv, want)
 	}
 }

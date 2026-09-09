@@ -92,18 +92,7 @@ func CheckControlPath(p string) error {
 }
 
 func MasterArgv(target, controlPath string) []string {
-	return []string{
-		"ssh", "-M", "-N", "-f",
-		"-o", "ControlPath=" + controlPath,
-		"-o", "ControlMaster=auto",
-		"-o", "ControlPersist=yes",
-		"-o", "BatchMode=yes",
-		"-o", "GatewayPorts=no",
-		"-o", "ConnectTimeout=10",
-		"-o", "ServerAliveInterval=15",
-		"-o", "ServerAliveCountMax=3",
-		target,
-	}
+	return portfwd.MasterArgv(target, controlPath)
 }
 
 func ExecArgv(target, controlPath, command string) []string {
@@ -655,7 +644,7 @@ func runLocalAgent(ctx context.Context, args []string, _ io.Writer, errW io.Writ
 			fmt.Fprintln(errW, err)
 			return 1
 		}
-		*ctl = ControlPathFor(dir, *host)
+		*ctl = ControlPathFor(dir, *target)
 	}
 	if err := CheckControlPath(*ctl); err != nil {
 		fmt.Fprintln(errW, err)

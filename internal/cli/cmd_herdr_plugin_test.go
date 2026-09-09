@@ -3,6 +3,9 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"strings"
@@ -687,5 +690,77 @@ func TestAgentEnsureMasterLiveSocketNotUnlinked(t *testing.T) {
 	}
 	if len(calls) != 1 {
 		t.Fatalf("want 1 call (check only), got %d", len(calls))
+	}
+}
+
+func TestControlPathFor_KeyedOnTarget(t *testing.T) {
+	dir := t.TempDir()
+	p1 := ControlPathFor(dir, "newman@engine-03")
+	p2 := ControlPathFor(dir, "newman@engine-04")
+	if p1 == p2 {
+		t.Fatalf("ControlPathFor: different targets must not share a socket; both got %q", p1)
+	}
+	if !strings.Contains(p1, "newman@engine-03") {
+		t.Fatalf("ControlPathFor: path %q must contain target key", p1)
+	}
+}
+
+func TestControlPathFor_SameTargetSameSocket(t *testing.T) {
+	dir := t.TempDir()
+	p1 := ControlPathFor(dir, "newman@engine-03")
+	p2 := ControlPathFor(dir, "newman@engine-03")
+	if p1 != p2 {
+		t.Fatalf("ControlPathFor: same target must produce same socket; got %q vs %q", p1, p2)
+	}
+}
+
+func TestRunLocalAgent_ControlPathKeyedOnTarget(t *testing.T) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "cmd_herdr_plugin.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parse cmd_herdr_plugin.go: %v", err)
+	}
+	var runLocalAgentBody *ast.BlockStmt
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Name.Name != "runLocalAgent" {
+			continue
+		}
+		runLocalAgentBody = fn.Body
+	}
+	if runLocalAgentBody == nil {
+		t.Fatal("runLocalAgent not found in cmd_herdr_plugin.go")
+	}
+	foundControlPathFor := false
+	wrongArg := false
+	ast.Inspect(runLocalAgentBody, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.Ident)
+		if !ok || sel.Name != "ControlPathFor" {
+			return true
+		}
+		foundControlPathFor = true
+		if len(call.Args) < 2 {
+			return true
+		}
+		star, ok := call.Args[1].(*ast.StarExpr)
+		if !ok {
+			wrongArg = true
+			return true
+		}
+		ident, ok := star.X.(*ast.Ident)
+		if !ok || ident.Name != "target" {
+			wrongArg = true
+		}
+		return true
+	})
+	if !foundControlPathFor {
+		t.Fatal("ControlPathFor not called inside runLocalAgent; path derivation was removed")
+	}
+	if wrongArg {
+		t.Fatal("ControlPathFor second arg is not *target; socket keyed on wrong variable (regression: was *host, causes accumulation)")
 	}
 }
