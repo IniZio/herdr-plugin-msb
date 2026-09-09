@@ -100,12 +100,19 @@ run cannot distinguish a set var from an ignored one.
 
 ## Revert
 
+The probe stanzas were committed as `ab56f50`, so restoring the file from the index
+would be a no-op. `git checkout --` is banned in this repo (see CLAUDE.md, "Working in
+a shared tree") — revert with a new commit instead:
+
 ```sh
-git checkout /home/newman/magic/herdr-plugin-msb/herdr-plugin.toml
+git revert --no-edit ab56f50
 herdr plugin unlink herdr-plugin-msb
 herdr plugin link /home/newman/magic/herdr-plugin-msb
 rm -f /tmp/herdr-linkenv-probe.txt /tmp/herdr-linkenv-probe-run-a.txt /tmp/herdr-linkenv-probe-run-b.txt
 ```
+
+`git revert` of `ab56f50` also removes this document. To keep the findings, record the
+two runs' outputs elsewhere (or in the motive journal) before reverting.
 
 Confirm revert:
 
