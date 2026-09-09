@@ -130,3 +130,31 @@ of 20000–29999 (10,000 ports) covers practically any dev workload with 90 MiB 
 overhead, a 400–450 ms boot contribution, and zero destructive-recreate events for
 ports in that range. The recreate path (for a port outside the range) still exists
 but should be rare enough to be acceptable.
+
+## Range allocator schema coupling
+
+`internal/runtime/msb/rangealloc.go` derives block occupancy by querying the daemon's private SQLite database directly via `sqlite3`. This is an explicit coupling to daemon internals that is NOT covered by the SDK's public API.
+
+### Schema elements depended on
+
+- File: `$MSB_HOME/db/msb.db` (default `$HOME/.microsandbox/db/msb.db`)
+- Table: `sandbox`
+- Column: `config` — JSON text; port assignments at `$.network.ports[*].host_port`
+- Column: `status` — string; values `removed` and `removing` are excluded from the live set; all other values are treated as live
+- JSON path: `config->'$.network.ports'` accessed via sqlite3's `json_each()` and `->>` operator
+
+### Why ConfigJSON() per-handle iteration was rejected
+
+`msbsdk.GetSandbox(name)` → `h.ConfigJSON()` is the SDK-sanctioned path for reading a sandbox's stored config. It was rejected because `LookupSandbox` (the FFI backing both `GetSandbox` and `ListSandboxes`) uses a fixed 1 MiB output buffer (`defaultBufSize = 1<<20` in `internal/ffi/ffi.go`). A 10,000-port sandbox config is approximately 1.8 MiB; any `GetSandbox` or `ListSandboxes` call on such a sandbox overflows the buffer and returns `KindBufferTooSmall`. There is no configurable override in v0.6.17. Verified: `output buffer too small: need 1821601, have 1048576`.
+
+### Failure mode on schema change
+
+`daemonOccupiedBlocks` runs a corroboration check: it counts live sandboxes (`SELECT COUNT(*) FROM sandbox WHERE status NOT IN ('removed','removing')`), then queries ports. If the sandbox count is positive but the ports query returns zero rows, it returns an error naming schema drift as the likely cause. This ensures a schema change surfaces as a loud `rangealloc: N live sandbox(es) in DB but no ports visible` error on the next `CreateAndBoot`, rather than a silent total collision where every sandbox is handed block 0.
+
+### Failure mode when sqlite3 is absent
+
+Both `Allocate` and `CheckCollision` fail closed if `sqlite3` is not on PATH: `exec.Command("sqlite3", ...)` returns a non-zero exit and the error propagates as `rangealloc: sqlite3 sandbox count: exec: "sqlite3": executable file not found in $PATH` (or similar). `CreateAndBoot` aborts before any sandbox is created.
+
+### Stability note
+
+microsandbox ships schema changes without notice. Any rename of the `sandbox` table, relocation of `$.network.ports`, or new status vocabulary values will surface via the corroboration check at worst, or as a sqlite3 error at best.

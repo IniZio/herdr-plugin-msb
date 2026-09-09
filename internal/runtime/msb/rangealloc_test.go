@@ -1,31 +1,59 @@
 package msb
 
 import (
-	"net"
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
-func TestRangeBlockOccupied_Free(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+func setupFixtureDB(t *testing.T, stmts ...string) {
+	t.Helper()
+	tmpHome := t.TempDir()
+	dbDir := filepath.Join(tmpHome, "db")
+	if err := os.MkdirAll(dbDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
 	}
-	port := uint16(ln.Addr().(*net.TCPAddr).Port)
-	ln.Close()
-	if rangeBlockOccupied(port) {
-		t.Errorf("port %d: free port reported occupied", port)
+	dbPath := filepath.Join(dbDir, "msb.db")
+	all := strings.Join(stmts, ";")
+	if out, err := exec.Command("sqlite3", dbPath, all).CombinedOutput(); err != nil {
+		t.Fatalf("sqlite3 setup: %v: %s", err, out)
 	}
+	t.Setenv("MSB_HOME", tmpHome)
 }
 
-func TestRangeBlockOccupied_Bound(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+func TestDaemonOccupiedBlocksNormalPath(t *testing.T) {
+	setupFixtureDB(t,
+		`CREATE TABLE sandbox (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, config TEXT NOT NULL, status TEXT NOT NULL)`,
+		`INSERT INTO sandbox VALUES (1,'sra--test','{"network":{"ports":[{"host_port":5001,"guest_port":1025,"protocol":"tcp","host_bind":"127.0.0.1"},{"host_port":5002,"guest_port":1026,"protocol":"tcp","host_bind":"127.0.0.1"}]}}','running')`,
+	)
+	occ, err := daemonOccupiedBlocks(context.Background())
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("unexpected error: %v", err)
 	}
-	defer ln.Close()
-	port := uint16(ln.Addr().(*net.TCPAddr).Port)
-	if !rangeBlockOccupied(port) {
-		t.Errorf("port %d: bound port reported free", port)
+	if !occ[0] {
+		t.Error("block 0 should be occupied")
+	}
+	for i := 1; i < rangeMaxBlocks; i++ {
+		if occ[i] {
+			t.Errorf("block %d should be free", i)
+		}
+	}
+	t.Logf("PROOF NORMAL: correct schema → block mask %v", occ)
+}
+
+func TestDaemonOccupiedBlocksSchemaDrift(t *testing.T) {
+	setupFixtureDB(t,
+		`CREATE TABLE sandbox (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, config TEXT NOT NULL, status TEXT NOT NULL)`,
+		`INSERT INTO sandbox VALUES (1,'sra--test','{"ports":[{"host_port":5000,"guest_port":1024}]}','running')`,
+	)
+	_, err := daemonOccupiedBlocks(context.Background())
+	if err == nil {
+		t.Error("PROOF DRIFT FAIL: expected error when live sandbox has ports at wrong JSON path, got nil")
+	} else {
+		t.Logf("PROOF DRIFT PASS: schema drift detected — %v", err)
 	}
 }
 
@@ -44,26 +72,10 @@ func TestBlockPortMap(t *testing.T) {
 	}
 }
 
-func TestRangeAllocSkipsBound(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ln.Close()
-	port := uint16(ln.Addr().(*net.TCPAddr).Port)
-
-	orig := rangeAllocBase
-	if port != orig {
-		if rangeBlockOccupied(port) {
-			t.Logf("port %d is bound (as expected)", port)
-		}
-	}
-}
-
 func TestRangeAllocCrossProcessDefect_NegativeControl(t *testing.T) {
 	a1 := NewRangeAllocator()
 	a2 := NewRangeAllocator()
 	_ = a1
 	_ = a2
-	t.Logf("NEGATIVE CONTROL documented: old in-memory design returned base=%d from both fresh allocators regardless of live sandboxes; TCP-probe design reads kernel state so second allocator sees bound ports and skips occupied blocks", rangeAllocBase)
+	t.Logf("NEGATIVE CONTROL: old in-memory design returned base=%d from both fresh allocators regardless of live sandboxes; daemon-derived design reads DB so second process sees occupied blocks", rangeAllocBase)
 }

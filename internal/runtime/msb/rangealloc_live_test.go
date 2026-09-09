@@ -208,7 +208,11 @@ func TestLiveRangeAllocOwnershipHole(t *testing.T) {
 		}
 	}()
 
-	tcpFree := !rangeBlockOccupied(rangeAllocBase)
+	ln2, err2 := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", rangeAllocBase))
+	tcpFree := err2 == nil
+	if tcpFree {
+		ln2.Close()
+	}
 	t.Logf("PROOF OH3: TCP-probe says port %d is free=%v (would cause false 'block unoccupied' with old design)", rangeAllocBase, tcpFree)
 
 	occ, err := daemonOccupiedBlocks(ctx)
