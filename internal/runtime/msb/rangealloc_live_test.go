@@ -47,21 +47,28 @@ func guestExec(ctx context.Context, r *Runtime, ref coreruntime.SandboxRef, argv
 	return res.ExitCode, out.String()
 }
 
+func occupiedBlocks() []int {
+	var idx []int
+	for i := range rangeMaxBlocks {
+		base := rangeAllocBase + uint16(i)*rangeBlockSize
+		if rangeBlockOccupied(base) {
+			idx = append(idx, i)
+		}
+	}
+	return idx
+}
+
 func TestLiveRangeAllocDisjoint(t *testing.T) {
 	RequireLive(t)
 	ctx := LiveContext(t)
 
-	r := &Runtime{alloc: NewRangeAllocator()}
+	r1 := &Runtime{alloc: NewRangeAllocator()}
+	r2 := &Runtime{alloc: NewRangeAllocator()}
 
-	spec1 := liveRangeSpec("ra-disj-1", 512)
-	spec2 := liveRangeSpec("ra-disj-2", 512)
+	_, listOut := hostRun(ctx, "msb", "list")
+	t.Logf("PROOF D0: msb list before window: %s", strings.TrimSpace(listOut))
 
 	var ref1, ref2 coreruntime.SandboxRef
-
-	t.Logf("PROOF D0: msb list before two-sandbox window")
-	_, listOut := hostRun(ctx, "msb", "list")
-	t.Logf("msb list: %s", strings.TrimSpace(listOut))
-
 	cleanup := func() {
 		cctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
@@ -69,7 +76,7 @@ func TestLiveRangeAllocDisjoint(t *testing.T) {
 			if ref.Name == "" {
 				continue
 			}
-			if h, err := r.handle(cctx, ref); err == nil {
+			if h, err := r1.handle(cctx, ref); err == nil {
 				_ = h.Kill(cctx)
 				_ = h.Remove(cctx)
 			}
@@ -78,36 +85,37 @@ func TestLiveRangeAllocDisjoint(t *testing.T) {
 	t.Cleanup(cleanup)
 
 	var err error
-	ref1, err = r.CreateAndBoot(ctx, spec1)
+	ref1, err = r1.CreateAndBoot(ctx, liveRangeSpec("ra-disj-1", 512))
 	if err != nil {
 		t.Fatalf("CreateAndBoot ref1: %v", err)
 	}
-	t.Logf("PROOF D1: ref1=%s/%s portMap base=%d", ref1.Project, ref1.Name, rangeAllocBase)
 
-	ref2, err = r.CreateAndBoot(ctx, spec2)
+	blocksAfter1 := occupiedBlocks()
+	t.Logf("PROOF D1: occupied block indices after sandbox 1: %v", blocksAfter1)
+	if len(blocksAfter1) != 1 {
+		t.Errorf("D1: expected 1 occupied block, got %v", blocksAfter1)
+	}
+
+	ref2, err = r2.CreateAndBoot(ctx, liveRangeSpec("ra-disj-2", 512))
 	if err != nil {
 		t.Fatalf("CreateAndBoot ref2: %v", err)
 	}
-	t.Logf("PROOF D2: ref2=%s/%s portMap base=%d", ref2.Project, ref2.Name, rangeAllocBase+rangeBlockSize)
 
-	base1, _ := r.alloc.Allocate(r.alloc.used[0])
-	base2, _ := r.alloc.Allocate(r.alloc.used[1])
-	t.Logf("PROOF D3: block0 base=%d block1 base=%d (must differ by %d)", base1, base2, rangeBlockSize)
-	if base1 == base2 {
-		t.Errorf("D3 FAIL: both sandboxes received same host base %d", base1)
+	blocksAfter2 := occupiedBlocks()
+	t.Logf("PROOF D2: occupied block indices after sandbox 2: %v", blocksAfter2)
+
+	if len(blocksAfter2) != 2 {
+		t.Errorf("D3 FAIL: expected 2 distinct occupied blocks, got %v — two fresh allocators may have collided", blocksAfter2)
+	} else {
+		if blocksAfter2[0] == blocksAfter2[1] {
+			t.Errorf("D3 FAIL: both sandboxes share block %d", blocksAfter2[0])
+		} else {
+			t.Logf("PROOF D3 PASS: sandboxes occupy distinct blocks %v (separate-process simulation)", blocksAfter2)
+		}
 	}
-	lo, hi := base1, base2
-	if lo > hi {
-		lo, hi = hi, lo
-	}
-	if lo+rangeBlockSize > hi {
-		t.Errorf("D3 FAIL: blocks overlap: lo=%d hi=%d blockSize=%d", lo, hi, rangeBlockSize)
-	}
-	t.Logf("PROOF D3 PASS: blocks disjoint [%d,%d) and [%d,%d)", lo, lo+rangeBlockSize, hi, hi+rangeBlockSize)
 
 	cleanup()
 	ref1.Name, ref2.Name = "", ""
-
 	_, listOut2 := hostRun(ctx, "msb", "list")
 	t.Logf("PROOF D4: msb list after window: %s", strings.TrimSpace(listOut2))
 }
@@ -125,14 +133,9 @@ func TestLiveRangeAllocDataTransfer(t *testing.T) {
 	}
 	CleanupSandbox(t, r, ref)
 
-	name := "sra" + nameSep + "ra-xfer"
-	hostBase, aerr := r.alloc.Allocate(name)
-	if aerr != nil {
-		t.Fatalf("Allocate: %v", aerr)
-	}
 	guestPort := uint16(3000)
-	hostPort := hostBase + (guestPort - rangeGuestBase)
-	t.Logf("PROOF X1: guestPort=%d hostPort=%d (base=%d)", guestPort, hostPort, hostBase)
+	hostPort := rangeAllocBase + (guestPort - rangeGuestBase)
+	t.Logf("PROOF X1: guestPort=%d hostPort=%d (base=%d)", guestPort, hostPort, rangeAllocBase)
 
 	marker := fmt.Sprintf("XFER-%d", time.Now().UnixNano())
 	listenScript := fmt.Sprintf(
@@ -144,11 +147,10 @@ func TestLiveRangeAllocDataTransfer(t *testing.T) {
 	time.Sleep(800 * time.Millisecond)
 
 	_, nsOut := guestExec(ctx, r, ref, []string{"netstat", "-ltn"})
-	portStr := fmt.Sprintf("%d", guestPort)
-	if !strings.Contains(nsOut, portStr) {
-		t.Fatalf("PROOF X2: guest netstat=%q — port %s not listening", nsOut, portStr)
+	if !strings.Contains(nsOut, fmt.Sprintf("%d", guestPort)) {
+		t.Fatalf("PROOF X2: guest netstat=%q — port %d not listening", nsOut, guestPort)
 	}
-	t.Logf("PROOF X2: guest netstat shows :%s LISTEN", portStr)
+	t.Logf("PROOF X2: guest netstat shows :%d LISTEN", guestPort)
 
 	addr := fmt.Sprintf("127.0.0.1:%d", hostPort)
 	conn, dialErr := net.DialTimeout("tcp", addr, 8*time.Second)
@@ -165,8 +167,12 @@ func TestLiveRangeAllocDataTransfer(t *testing.T) {
 		t.Errorf("X3 FAIL: received %q, want %q", received, marker)
 	}
 
-	ncCode, _ := hostRun(ctx, "nc", "-z", "-w5", "127.0.0.1", fmt.Sprintf("%d", hostPort-1))
-	t.Logf("PROOF X4 negative: nc -z unpublished port=%d exit=%d (want non-zero)", hostPort-1, ncCode)
+	unpublishedPort := uint16(1023)
+	ncCode, _ := hostRun(ctx, "nc", "-z", "-w5", "127.0.0.1", fmt.Sprintf("%d", unpublishedPort))
+	t.Logf("PROOF X4 negative: nc -z port=%d (unpublished, below rangeAllocBase) exit=%d (want non-zero)", unpublishedPort, ncCode)
+	if ncCode == 0 {
+		t.Errorf("X4: unpublished port %d reached from host — negative control degenerate", unpublishedPort)
+	}
 }
 
 func TestLiveRangeAllocBlockLifecycle(t *testing.T) {
@@ -189,34 +195,38 @@ func TestLiveRangeAllocBlockLifecycle(t *testing.T) {
 		}
 	})
 
-	sdkName := "sra" + nameSep + "ra-lc"
-	base1, _ := r.alloc.Allocate(sdkName)
-	t.Logf("PROOF L1: allocated base=%d", base1)
-
-	_, err2 := r.alloc.Allocate("other-occupies-next")
-	if err2 != nil {
-		t.Fatalf("Allocate second: %v", err2)
-	}
-	_, expectErr := r.alloc.Allocate("try-same-block")
-	if expectErr != nil {
-		t.Logf("PROOF L2: different name cannot get same block (err=%v)", expectErr)
+	liveBlocks := occupiedBlocks()
+	t.Logf("PROOF L1: sandbox live, occupied block indices=%v", liveBlocks)
+	if len(liveBlocks) != 1 {
+		t.Errorf("L1: expected 1 occupied block, got %v", liveBlocks)
 	}
 
-	if h, herr := r.handle(ctx, ref); herr == nil {
-		_ = h.Kill(ctx)
+	r2 := &Runtime{alloc: NewRangeAllocator()}
+	base2, aerr := r2.alloc.Allocate(ctx, "sra--ra-lc-other")
+	if aerr != nil {
+		t.Fatalf("second alloc while first live: %v", aerr)
+	}
+	t.Logf("PROOF L2: second fresh alloc (while first live) got base=%d (want != %d)", base2, rangeAllocBase)
+	if base2 == rangeAllocBase {
+		t.Errorf("L2 FAIL: second allocator returned same base=%d as live sandbox — collision", rangeAllocBase)
+	}
+
+	if h2, herr2 := r.handle(ctx, ref); herr2 == nil {
+		_ = h2.Kill(ctx)
 	}
 	if err := r.Remove(ctx, ref); err != nil {
 		t.Fatalf("Remove: %v", err)
 	}
-	t.Logf("PROOF L3: removed sandbox, alloc.Free should have been called by Runtime.Remove")
+	t.Logf("PROOF L3: sandbox removed")
 
-	base2, err3 := r.alloc.Allocate("after-free")
-	if err3 != nil {
-		t.Fatalf("PROOF L3 FAIL: Allocate after free: %v", err3)
+	r3 := &Runtime{alloc: NewRangeAllocator()}
+	base3, aerr3 := r3.alloc.Allocate(ctx, "sra--ra-lc-after-free")
+	if aerr3 != nil {
+		t.Fatalf("PROOF L3 FAIL: alloc after remove: %v", aerr3)
 	}
-	t.Logf("PROOF L3: freed block reused: base1=%d base2=%d match=%v", base1, base2, base1 == base2)
-	if base1 != base2 {
-		t.Errorf("L3 FAIL: freed block not reused: base1=%d base2=%d", base1, base2)
+	t.Logf("PROOF L3: after remove, fresh alloc got base=%d (want %d — block freed in kernel)", base3, rangeAllocBase)
+	if base3 != rangeAllocBase {
+		t.Errorf("L3 FAIL: after remove, expected base=%d, got %d — kernel ports not released", rangeAllocBase, base3)
 	}
 }
 
@@ -256,16 +266,14 @@ func TestLiveRangeAllocBootMetrics(t *testing.T) {
 	_, psOut := hostRun(ctx, "sh", "-c", "ps -eo rss,comm | grep libkrun | awk '{sum+=$1} END {printf \"%d\", sum}'")
 	t.Logf("PROOF M3: host libkrun aggregate RSS = %s KiB", strings.TrimSpace(psOut))
 
-	sdkName := "sra" + nameSep + "ra-metrics"
-	base, _ := r.alloc.Allocate(sdkName)
-	hostPortStr := fmt.Sprintf("%d:%d", base, base+rangeBlockSize-1)
 	_, ssOut := hostRun(ctx, "sh", "-c",
 		fmt.Sprintf("ss -tnlp | awk '$4 ~ /^127\\.0\\.0\\.1:/ {split($4,a,\":\"); p=a[2]+0; if(p>=%d && p<=%d) count++} END {print count+0}'",
-			base, uint32(base)+uint32(rangeBlockSize)-1),
+			rangeAllocBase, uint32(rangeAllocBase)+uint32(rangeBlockSize)-1),
 	)
 	actual := strings.TrimSpace(ssOut)
-	t.Logf("PROOF M4: host listeners in range %s = %s (requested %d)", hostPortStr, actual, rangeBlockSize)
+	t.Logf("PROOF M4: host listeners in range %d:%d = %s (requested %d)",
+		rangeAllocBase, uint32(rangeAllocBase)+uint32(rangeBlockSize)-1, actual, rangeBlockSize)
 	if actual == "0" {
-		t.Errorf("M4: zero listeners in host range %s — port publishing did not land", hostPortStr)
+		t.Errorf("M4: zero listeners in host range — port publishing did not land")
 	}
 }
