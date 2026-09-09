@@ -54,6 +54,13 @@ command = ["herdr-plugin-msb", "new-tab"]
 contexts = ["workspace"]
 platforms = ["linux"]
 
+[[actions]]
+id = "space-convert"
+title = "Convert This Workspace to a Sandbox"
+command = ["herdr-plugin-msb", "space-convert"]
+contexts = ["workspace"]
+platforms = ["linux"]
+
 [[events]]
 on = "worktree.created"
 command = ["sh", "plugins/herdr/bin/on-worktree-created.sh"]

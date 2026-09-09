@@ -168,3 +168,38 @@ $ herdr workspace get w8 | jq -c .
 
 The `worktree` field at `.result.workspace.worktree.checkout_path` confirms the workspace
 object shape delivered in worktree event payloads.
+
+## The primary checkout is never sandboxed
+
+`space-convert` refuses any workspace whose `worktree.is_linked_worktree` is not `true`.
+The check lives in `refuseNonLinkedWorktree` and fires in `runSpaceConvert` immediately
+after `herdrWorkspaceGet`, before `herdrRootPaneID`, before `convertCreateSandbox`, and
+before `herdrspace.Put` — a refusal that fires after a microVM has booted is not a
+refusal. The refusal writes no binding and creates no sandbox.
+
+The test is structural, not a path prefix. A linked worktree can live anywhere, so
+`/home/newman/.herdr/worktrees/` is not the signal; `is_linked_worktree` is. The field
+absent from the payload is treated as "not a linked worktree" and refused: fail closed.
+
+Rationale. Converting the primary checkout binds the tree the operator and their agents
+work in, replaces its root pane with a guest shell, and tears its panes down when the
+sandbox is removed. This happened twice. Both times the workspace was `w8`, the operator's
+main checkout, and both times it ended with 64 `Microsandbox guest shell` panes in it.
+
+The second occurrence identified the mechanism, which is not a hand-typed command.
+`TestShippedVerbRegistry` at `internal/cli/cmd_sandbox_test.go:181` calls
+`Run(ctx, []string{verb})` for every shipped verb, `space-convert` included, with
+`convertCreateSandbox` unstubbed. Once `--workspace` gained its `$HERDR_WORKSPACE_ID`
+default, running `make test` from inside a workspace became a real conversion of that
+workspace: a real microVM, a real binding, real panes. Any agent running the gate from
+inside `w8` reproduced the incident. The `is_linked_worktree` refusal closes that path,
+but the unstubbed verb sweep remains a live hazard for every other mutating verb.
+
+## `make test` can report ok over a red package
+
+`internal/cli` reports `ok` while tests fail. `TestShippedVerbRegistry` runs the
+`default-shell` verb, `runDefaultShell` calls `syscall.Exec` at
+`internal/cli/cmd_herdrspace_default_shell.go:77`, and the test binary is replaced by
+`$SHELL`, which exits 0. Every test declared after it never runs, and the buffered failure
+report of every test before it is discarded. Read `-v` output, not the package summary,
+when a result matters.

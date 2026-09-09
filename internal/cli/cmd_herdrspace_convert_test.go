@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/IniZio/herdr-plugin-msb/internal/core/herdrspace"
 	"github.com/IniZio/herdr-plugin-msb/internal/core/service"
 )
 
@@ -60,7 +61,61 @@ func stubConvertSandbox(t *testing.T, created *[]string, createErr error) {
 	})
 }
 
-const convertWorkspaceJSON = `{"id":"cli:workspace:get","result":{"type":"workspace_info","workspace":{"workspace_id":"w9","label":"lms","active_tab_id":"w9:t1","worktree":{"checkout_path":"/home/u/wt/lms"}}}}`
+const convertWorkspaceJSON = `{"id":"cli:workspace:get","result":{"type":"workspace_info","workspace":{"workspace_id":"w9","label":"lms","active_tab_id":"w9:t1","worktree":{"checkout_path":"/home/u/wt/lms","repo_root":"/home/u/lms","is_linked_worktree":true}}}}`
+
+const primaryCheckoutWorkspaceJSON = `{"id":"cli:workspace:get","result":{"type":"workspace_info","workspace":{"workspace_id":"w9","label":"lms","active_tab_id":"w9:t1","worktree":{"checkout_path":"/home/u/lms","repo_root":"/home/u/lms","is_linked_worktree":false}}}}`
+
+const noLinkedFlagWorkspaceJSON = `{"id":"cli:workspace:get","result":{"type":"workspace_info","workspace":{"workspace_id":"w9","label":"lms","active_tab_id":"w9:t1","worktree":{"checkout_path":"/home/u/lms","repo_root":"/home/u/lms"}}}}`
+
+func assertConvertRefusesPrimaryCheckout(t *testing.T, wsJSON string) {
+	t.Helper()
+	stateParent := t.TempDir()
+	bin, logPath := fakeHerdrConvertBin(t, wsJSON)
+	t.Setenv("HERDR_BIN_PATH", bin)
+	t.Setenv("XDG_STATE_HOME", stateParent)
+
+	var created []string
+	stubConvertSandbox(t, &created, nil)
+
+	var stdout, stderr bytes.Buffer
+	code := runSpaceConvert(context.Background(),
+		[]string{"--workspace", "w9", "--image", "img:latest"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("primary checkout must never convert; stdout=%q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "primary checkout") || !strings.Contains(stderr.String(), "worktree") {
+		t.Fatalf("refusal must say why and what to do instead; stderr=%q", stderr.String())
+	}
+	if len(created) != 0 {
+		t.Fatalf("no sandbox may be created for the primary checkout; got %v", created)
+	}
+	dir, err := StateDir(os.Getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := herdrspace.GetByWorkspaceID(context.Background(), dir, "w9"); err == nil {
+		t.Fatal("refusal must not write a binding")
+	}
+	for _, line := range readArgvLog(t, logPath) {
+		if !strings.HasPrefix(line, "workspace get") {
+			t.Fatalf("refusal must fire before any other herdr call; got %q", line)
+		}
+	}
+}
+
+func TestSpaceConvert_RefusesPrimaryCheckout(t *testing.T) {
+	assertConvertRefusesPrimaryCheckout(t, primaryCheckoutWorkspaceJSON)
+}
+
+func TestSpaceConvert_RefusesWhenLinkedWorktreeFlagAbsent(t *testing.T) {
+	assertConvertRefusesPrimaryCheckout(t, noLinkedFlagWorkspaceJSON)
+}
+
+const liveW8WorkspaceJSON = `{"id":"cli:workspace:get","result":{"type":"workspace_info","workspace":{"active_tab_id":"w9:t1","agent_status":"working","focused":true,"label":"herdr-plugin-msb","number":2,"pane_count":1,"tab_count":1,"workspace_id":"w9","worktree":{"checkout_path":"/home/newman/magic/herdr-plugin-msb","is_linked_worktree":false,"repo_key":"/home/newman/magic/herdr-plugin-msb/.git","repo_name":"herdr-plugin-msb","repo_root":"/home/newman/magic/herdr-plugin-msb"}}}}`
+
+func TestSpaceConvert_RefusesLiveOperatorPrimaryCheckoutPayload(t *testing.T) {
+	assertConvertRefusesPrimaryCheckout(t, liveW8WorkspaceJSON)
+}
 
 func TestSpaceConvert_SplitsBeforeClosingRootAndNeverCreatesWorkspace(t *testing.T) {
 	stateParent := t.TempDir()
@@ -158,5 +213,124 @@ func TestSandboxNameFromLabel(t *testing.T) {
 		if got := sandboxNameFromLabel(tc.label, tc.ws); got != tc.want {
 			t.Fatalf("sandboxNameFromLabel(%q): got %q want %q", tc.label, got, tc.want)
 		}
+	}
+}
+
+func TestSpaceConvert_EnvWorkspaceID(t *testing.T) {
+	stateParent := t.TempDir()
+	bin, _ := fakeHerdrConvertBin(t, convertWorkspaceJSON)
+	t.Setenv("HERDR_BIN_PATH", bin)
+	t.Setenv("XDG_STATE_HOME", stateParent)
+	t.Setenv("HERDR_WORKSPACE_ID", "w9")
+
+	var created []string
+	stubConvertSandbox(t, &created, nil)
+
+	var stdout, stderr bytes.Buffer
+	code := runSpaceConvert(context.Background(), nil, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("space-convert with HERDR_WORKSPACE_ID: want 0, got %d; stderr=%q", code, stderr.String())
+	}
+	if len(created) != 1 {
+		t.Fatalf("sandbox must be created; got %v", created)
+	}
+}
+
+func TestSpaceConvert_NoWorkspaceNoEnv(t *testing.T) {
+	t.Setenv("HERDR_WORKSPACE_ID", "")
+
+	var stdout, stderr bytes.Buffer
+	code := runSpaceConvert(context.Background(), nil, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("no workspace: want exit 2, got %d; stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "workspace ID required") {
+		t.Fatalf("error must contain 'workspace ID required'; stderr=%q", stderr.String())
+	}
+}
+
+func TestSpaceConvert_DefaultImage(t *testing.T) {
+	stateParent := t.TempDir()
+	bin, _ := fakeHerdrConvertBin(t, convertWorkspaceJSON)
+	t.Setenv("HERDR_BIN_PATH", bin)
+	t.Setenv("XDG_STATE_HOME", stateParent)
+
+	var capturedImage string
+	orig := convertCreateSandbox
+	convertCreateSandbox = func(ctx context.Context, project string, opts service.CreateOptions) error {
+		capturedImage = opts.ImageRef
+		return nil
+	}
+	t.Cleanup(func() { convertCreateSandbox = orig })
+
+	var stdout, stderr bytes.Buffer
+	code := runSpaceConvert(context.Background(), []string{"--workspace", "w9"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("space-convert no --image: want 0, got %d; stderr=%q", code, stderr.String())
+	}
+	if capturedImage != "alpine" {
+		t.Fatalf("default image must be alpine; got %q", capturedImage)
+	}
+}
+
+func TestSpaceConvert_AlreadyBound(t *testing.T) {
+	stateParent := t.TempDir()
+	bin, _ := fakeHerdrConvertBin(t, convertWorkspaceJSON)
+	t.Setenv("HERDR_BIN_PATH", bin)
+	t.Setenv("XDG_STATE_HOME", stateParent)
+
+	stateDir := filepath.Join(stateParent, StateDirNS)
+	if err := os.MkdirAll(stateDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := herdrspace.Put(context.Background(), stateDir, herdrspace.Binding{
+		HerdrWorkspaceID: "w9",
+		SandboxHandle:    "demo/lms-w9",
+		SpaceLabel:       "lms",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	calls := 0
+	orig := convertCreateSandbox
+	convertCreateSandbox = func(ctx context.Context, project string, opts service.CreateOptions) error {
+		calls++
+		return nil
+	}
+	t.Cleanup(func() { convertCreateSandbox = orig })
+
+	var stdout, stderr bytes.Buffer
+	code := runSpaceConvert(context.Background(),
+		[]string{"--workspace", "w9", "--image", "img:latest", "--project", "demo"},
+		&stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("already-bound workspace must exit 1; got %d; stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "demo/lms-w9") {
+		t.Fatalf("error must name existing sandbox handle; stderr=%q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "space-open-pane") {
+		t.Fatalf("error must mention space-open-pane; stderr=%q", stderr.String())
+	}
+	if calls != 0 {
+		t.Fatalf("convertCreateSandbox must NOT be called when already bound; call count=%d", calls)
+	}
+}
+
+func TestSpaceConvert_UnboundDoesNotRefuse(t *testing.T) {
+	stateParent := t.TempDir()
+	bin, _ := fakeHerdrConvertBin(t, convertWorkspaceJSON)
+	t.Setenv("HERDR_BIN_PATH", bin)
+	t.Setenv("XDG_STATE_HOME", stateParent)
+
+	var created []string
+	stubConvertSandbox(t, &created, nil)
+
+	var stdout, stderr bytes.Buffer
+	code := runSpaceConvert(context.Background(),
+		[]string{"--workspace", "w9", "--image", "img:latest"},
+		&stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("unbound workspace must not be refused; got %d; stderr=%q", code, stderr.String())
 	}
 }

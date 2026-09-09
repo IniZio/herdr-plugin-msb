@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -22,7 +23,9 @@ type herdrWorkspaceInfo struct {
 			Label       string `json:"label"`
 			ActiveTabID string `json:"active_tab_id"`
 			Worktree    *struct {
-				CheckoutPath string `json:"checkout_path"`
+				CheckoutPath     string `json:"checkout_path"`
+				RepoRoot         string `json:"repo_root"`
+				IsLinkedWorktree bool   `json:"is_linked_worktree"`
 			} `json:"worktree"`
 		} `json:"workspace"`
 	} `json:"result"`
@@ -48,21 +51,51 @@ var convertRemoveSandbox = func(ctx context.Context, project, name string) error
 	return service.New(msb.New(), project).Remove(ctx, name)
 }
 
-func herdrWorkspaceGet(ctx context.Context, bin, workspaceID string) (label, checkoutPath, activeTabID string, err error) {
+const defaultConvertImage = "alpine"
+
+type convertWorkspace struct {
+	Label            string
+	CheckoutPath     string
+	RepoRoot         string
+	ActiveTabID      string
+	IsLinkedWorktree bool
+}
+
+func herdrWorkspaceGet(ctx context.Context, bin, workspaceID string) (convertWorkspace, error) {
 	out, err := exec.CommandContext(ctx, bin, "workspace", "get", workspaceID).Output()
 	if err != nil {
-		return "", "", "", fmt.Errorf("herdr workspace get %s: %w", workspaceID, err)
+		return convertWorkspace{}, fmt.Errorf("herdr workspace get %s: %w", workspaceID, err)
 	}
 	raw := strings.TrimSpace(string(out))
 	var info herdrWorkspaceInfo
 	if jsonErr := json.Unmarshal([]byte(raw), &info); jsonErr != nil {
-		return "", "", "", fmt.Errorf("herdr workspace get %s: parse: %w: %s", workspaceID, jsonErr, raw)
+		return convertWorkspace{}, fmt.Errorf("herdr workspace get %s: parse: %w: %s", workspaceID, jsonErr, raw)
 	}
 	ws := info.Result.Workspace
 	if ws.Worktree == nil || strings.TrimSpace(ws.Worktree.CheckoutPath) == "" {
-		return "", "", "", fmt.Errorf("herdr workspace %s has no worktree checkout_path; space-convert requires a worktree-backed workspace", workspaceID)
+		return convertWorkspace{}, fmt.Errorf("herdr workspace %s has no worktree checkout_path; space-convert requires a worktree-backed workspace", workspaceID)
 	}
-	return ws.Label, ws.Worktree.CheckoutPath, ws.ActiveTabID, nil
+	return convertWorkspace{
+		Label:            ws.Label,
+		CheckoutPath:     ws.Worktree.CheckoutPath,
+		RepoRoot:         ws.Worktree.RepoRoot,
+		ActiveTabID:      ws.ActiveTabID,
+		IsLinkedWorktree: ws.Worktree.IsLinkedWorktree,
+	}, nil
+}
+
+func refuseNonLinkedWorktree(ws convertWorkspace, workspaceID string) error {
+	if ws.IsLinkedWorktree {
+		return nil
+	}
+	root := strings.TrimSpace(ws.RepoRoot)
+	if root == "" {
+		root = ws.CheckoutPath
+	}
+	return fmt.Errorf("space-convert: refusing to sandbox workspace %s: %s is the primary checkout of %s, not a linked worktree (herdr reports is_linked_worktree=false or absent).\n"+
+		"Sandboxing the primary checkout binds the tree you and your agents work in and tears down its panes when the sandbox is removed.\n"+
+		"Instead: create a linked worktree (herdr worktree create), open a workspace on it, and run space-convert there",
+		workspaceID, ws.CheckoutPath, root)
 }
 
 func herdrRootPaneID(ctx context.Context, bin, workspaceID, activeTabID string) (string, error) {
@@ -139,19 +172,18 @@ func sandboxNameFromLabel(label, workspaceID string) string {
 func runSpaceConvert(ctx context.Context, args []string, out, errW io.Writer) int {
 	fs := flag.NewFlagSet("space-convert", flag.ContinueOnError)
 	fs.SetOutput(errW)
-	workspaceID := fs.String("workspace", "", "existing herdr workspace id (required)")
+	workspaceID := fs.String("workspace", "", "existing herdr workspace id (default: $HERDR_WORKSPACE_ID)")
 	sandbox := fs.String("sandbox", "", "sandbox name (default: derived from workspace label)")
-	image := fs.String("image", "", "OCI image ref (required)")
+	image := fs.String("image", defaultConvertImage, "OCI image ref (default: alpine)")
 	project := fs.String("project", service.DefaultProject, "msb project")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if *workspaceID == "" {
-		fmt.Fprintln(errW, "space-convert: --workspace is required")
-		return 2
+		*workspaceID = os.Getenv("HERDR_WORKSPACE_ID")
 	}
-	if *image == "" {
-		fmt.Fprintln(errW, "space-convert: --image is required")
+	if *workspaceID == "" {
+		fmt.Fprintln(errW, "space-convert: workspace ID required (--workspace or HERDR_WORKSPACE_ID)")
 		return 2
 	}
 
@@ -161,14 +193,29 @@ func runSpaceConvert(ctx context.Context, args []string, out, errW io.Writer) in
 		return 1
 	}
 
-	bin := herdrBin()
-	label, checkoutPath, activeTabID, err := herdrWorkspaceGet(ctx, bin, *workspaceID)
-	if err != nil {
+	existing, err := herdrspace.GetByWorkspaceID(ctx, dir, *workspaceID)
+	if err == nil {
+		fmt.Fprintf(errW, "space-convert: workspace %s is already bound to sandbox %s; use space-open-pane to attach\n", *workspaceID, existing.SandboxHandle)
+		return 1
+	}
+	if !errors.Is(err, herdrspace.ErrNotFound) {
 		fmt.Fprintln(errW, err)
 		return 1
 	}
 
-	rootPaneID, err := herdrRootPaneID(ctx, bin, *workspaceID, activeTabID)
+	bin := herdrBin()
+	ws, err := herdrWorkspaceGet(ctx, bin, *workspaceID)
+	if err != nil {
+		fmt.Fprintln(errW, err)
+		return 1
+	}
+	if refuseErr := refuseNonLinkedWorktree(ws, *workspaceID); refuseErr != nil {
+		fmt.Fprintln(errW, refuseErr)
+		return 1
+	}
+	label, checkoutPath := ws.Label, ws.CheckoutPath
+
+	rootPaneID, err := herdrRootPaneID(ctx, bin, *workspaceID, ws.ActiveTabID)
 	if err != nil {
 		fmt.Fprintln(errW, err)
 		return 1
