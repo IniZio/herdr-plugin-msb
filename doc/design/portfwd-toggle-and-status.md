@@ -15,13 +15,24 @@ Where this document departs from `portfwd-ux.md`, the departure is marked
 Four findings established after the initial draft force material changes to the
 operator surface, the pre-publish story, and the option ranking.
 
-**Finding 1 — herdr 0.8.0 capability gaps (VERIFIED from help text and manifest
-schema, not inference):**
+**Finding 1 — herdr 0.8.0 capability gaps. SOURCING CORRECTED:** an earlier
+revision of this section claimed these were "VERIFIED from help text and manifest
+schema". There is no `herdr manifest schema` command — `herdr manifest` returns
+"unknown command" — so that citation was false. Each claim below now carries its
+actual source and confidence. This matters because the same doc series already
+attributed a non-existent "action argument prompt" to herdr (retracted in
+c9d0d03); a second unsourced capability claim is the same failure repeating.
 
 - `herdr plugin action invoke` accepts only `--plugin` and a positional
-  `<ACTION_ID>`. `[[actions]]` carries only `id`, `title`, `command`, `contexts`,
-  `platforms` — no parameter, prompt, or substitution field. Actions fire their
-  `command` verbatim with no operator input and no substitution.
+  `<ACTION_ID>`. **VERIFIED** — `herdr plugin action invoke --help` was run.
+- `[[actions]]` is *observed* to carry `id`, `title`, `command`, `contexts`,
+  `platforms` (from this repo's own manifest and from `herdr plugin action list`
+  output, which is herdr's own serialization). **INFERRED, NOT VERIFIED**, that no
+  parameter/prompt/substitution field *exists*: absence of a field from a manifest
+  that does not use one cannot establish absence from the parser, and herdr's
+  source is not on this machine. The design does not depend on this being airtight
+  — the pane-TUI surface needs no action parameter either way — but if a future
+  need turns on it, read herdr's source or docs rather than re-deriving it here.
 - Actions cannot be registered at runtime. `herdr plugin action` has only `list`
   and `invoke`. Per-port "Unforward 3000" menu entries are not expressible.
 - Panes CANNOT route keypresses back to the plugin via herdr protocol. `herdr
@@ -30,6 +41,21 @@ schema, not inference):**
   process owns its terminal and reads stdin freely. A plugin-owned TUI running
   inside a pane renders status and accepts keypresses with zero herdr protocol
   involvement. **This is the unlock — it becomes the primary operator surface.**
+
+  **DEMONSTRATED**, after an advisor gate found this had been asserted rather than
+  shown. A probe `[[panes]]` entrypoint running `tty; ls -la /proc/self/fd/0; read`
+  produced, verbatim:
+
+  ```
+  /dev/pts/5
+  lrwx------ 1 newman newman 64 Sep  9 08:48 /proc/self/fd/0 -> /dev/pts/5
+  --- reading (blocks if real PTY)
+  ```
+
+  The output ends there: `read` blocked rather than returning on EOF. A real PTY,
+  stdin bound to it, and a blocking read — the three things the TUI surface needs.
+  Not tested: keypress delivery from a human, and whether input can be injected
+  programmatically through the herdr API. Neither affects the surface being viable.
 - herdr has no plugin autostart hook (no `startup/session.started` event, no
   `daemon/service` subcommand). The laptop `local-agent` must be started by
   launchd on macOS. That is an OS-layer deliverable; design it explicitly (§B-5
@@ -49,6 +75,30 @@ exit 1. So the laptop agent can raise a pane on the engine by calling
 `PaneOpenArgv` (cmd_herdr_plugin.go:261-268) over its existing SSH ControlMaster
 via the existing `ExecArgv` helper (:104-106). No local herdr socket needed.
 Agent-push IS available; Option 3 is no longer blocked on OQ-3 for availability.
+
+**CONTROL REPAIRED.** The `setsid` control above varied the *plugin name*, not the
+TTY condition, so it could not distinguish "tolerates no TTY" from "never checks".
+A valid control now exists: bare `herdr` through the identical wrapper panics —
+`failed to initialize terminal: Os { code: 6, ... "No such device or address" }`,
+exit 101. The wrapper does strip the TTY in a way herdr notices.
+
+**RE-RUN THROUGH A REAL SSH EXEC CHANNEL**, since `setsid` only simulates one.
+Opened pane `w83:pF` with `"type":"plugin_pane_opened"`, confirmed in
+`herdr pane list`, then closed; invalid plugin id gave `plugin_not_found`/exit 1.
+Three requirements the implementation MUST supply explicitly:
+
+- **`--placement tab`** (or `split`). The default is an overlay targeting *the
+  active pane*, and an ssh exec channel has none. Omitting it fails.
+- **`--workspace <ID>`**. Without it the pane lands in whatever workspace herdr
+  considers active. This is why an earlier probe opened a pane in the operator's
+  own w8 — a missing flag, not a one-off slip, so it will recur without this.
+- **`undeletedHerdrBin`** for any path read from `/proc/<pid>/exe`. Confirmed live:
+  `/proc/8365/exe -> /home/newman/.local/bin/herdr (deleted)`. The daemon holds the
+  pre-update inode and the literal ` (deleted)` suffix is part of the string.
+
+`HERDR_SOCKET_PATH` is *not* forwarded by sshd, but herdr's default socket path
+resolved correctly, so it need not be supplied. `herdr` does resolve on PATH in a
+non-login ssh exec shell (`/home/newman/.local/bin/herdr`).
 
 Carry-forward from this proof: `Notifier.Notify` currently checks only exit code
 (:281). It must additionally assert `type == "plugin_pane_opened"` in the JSON
