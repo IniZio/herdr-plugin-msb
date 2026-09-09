@@ -9,6 +9,9 @@ GOTEST_MEM_MAX  ?= 10G
 GOTEST_ARGS     ?=
 INSTALL_DIR     ?= $(HOME)/.local/bin
 
+# GOTEST_ARGS reaches the recipe shell via the environment, never as shell text.
+export GOTEST_ARGS
+
 # See doc/memory-guards.md — CAPPED rationale, GOMAXPROCS, ManagedOOMPreference=avoid, -count=1.
 # Set HERDR_MSB_ALLOW_UNCAPPED=1 in CI (no user systemd instance). Fails closed otherwise.
 define CAPPED
@@ -43,4 +46,4 @@ test:
 	@scripts/test-session.sh $(MAKE) test-capped
 
 test-capped:
-	$(call CAPPED,go test -race -p $(GOTEST_P) -parallel $(GOTEST_PARALLEL) -count=1 $(GOTEST_ARGS) ./...)
+	$(call CAPPED,go test -race -p $(GOTEST_P) -parallel $(GOTEST_PARALLEL) -count=1 $$GOTEST_ARGS ./...)
