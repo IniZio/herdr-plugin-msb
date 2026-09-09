@@ -173,6 +173,22 @@ func portsFromConfigJSON(configJSON string) ([]uint32, error) {
 	return ports, nil
 }
 
+func baseFromConfigJSON(configJSON string) uint16 {
+	ports, err := portsFromConfigJSON(configJSON)
+	if err != nil || len(ports) == 0 {
+		return 0
+	}
+	lo := uint32(rangeAllocBase)
+	hi := lo + uint32(rangeMaxBlocks)*uint32(rangeBlockSize) - 1
+	for _, p := range ports {
+		if p >= lo && p <= hi {
+			idx := (p - lo) / uint32(rangeBlockSize)
+			return rangeAllocBase + uint16(idx)*rangeBlockSize
+		}
+	}
+	return 0
+}
+
 func blockPortMap(hostBase uint16) map[uint16]uint16 {
 	m := make(map[uint16]uint16, rangeBlockSize)
 	for i := uint16(0); i < rangeBlockSize; i++ {
