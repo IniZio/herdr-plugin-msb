@@ -104,18 +104,34 @@ func TestRunExecValidation(t *testing.T) {
 	}
 }
 
-func TestUsageVerbs(t *testing.T) {
-	ctx := context.Background()
-	var stdout bytes.Buffer
-	Run(ctx, []string{"help"}, &stdout, &bytes.Buffer{})
-	out := stdout.String()
+// shippedVerbs is the single source of truth for the verb registry: every verb
+// that appears in the usage text. helpAliases dispatch but are not listed there.
+// Shipped verbs are NEVER executed here — space-convert, space-open-pane and
+// new-tab create sandboxes, bindings and panes, and default-shell syscall.Execs
+// away the test binary. Their runtime behaviour has dedicated tests above and in
+// cmd_herdrspace_*_test.go; this test asserts the registry statically.
+var shippedVerbs = []string{
+	"create", "ps", "exec", "start", "stop", "rm",
+	"version", "declare", "status", "list", "local-agent", "help",
+	"space-create", "space-convert", "space-open-pane", "new-tab", "space-prune",
+	"default-shell",
+}
 
-	expected := []string{
-		"create", "ps", "exec", "start", "stop", "rm",
-		"version", "declare", "status", "list", "local-agent", "help",
-		"space-create", "space-convert", "space-open-pane", "new-tab", "space-prune",
-		"default-shell",
-	}
+var helpAliases = []string{"--help", "-h"}
+
+var declinedVerbs = []string{
+	"shell", "run", "attach", "ssh", "log", "snapshot",
+	"fork", "sandbox", "volume", "image", "cp", "auth",
+	"egress", "ls", "harvest", "orca", "pause", "reap",
+	"recover", "restore", "resume", "mcp", "doctor", "forward",
+	"supervisor-upgrade", "supervisor-backfill-netns-identity",
+}
+
+func usageVerbs(t *testing.T) []string {
+	t.Helper()
+	var stdout bytes.Buffer
+	Run(context.Background(), []string{"help"}, &stdout, &bytes.Buffer{})
+	out := stdout.String()
 
 	var found []string
 	for _, line := range strings.Split(out, "\n") {
@@ -136,74 +152,11 @@ func TestUsageVerbs(t *testing.T) {
 		}
 	}
 
-	expectedSet := make(map[string]bool, len(expected))
-	for _, v := range expected {
-		expectedSet[v] = true
-	}
-	foundSet := make(map[string]bool, len(found))
-	for _, v := range found {
-		foundSet[v] = true
-	}
-	for _, v := range expected {
-		if !foundSet[v] {
-			t.Errorf("usage missing expected verb %q", v)
-		}
-	}
-	for _, v := range found {
-		if !expectedSet[v] {
-			t.Errorf("usage lists unexpected verb %q", v)
-		}
-	}
-	if len(found) != len(expected) {
-		t.Errorf("usage verb count: got %d, want %d; found=%v", len(found), len(expected), found)
-	}
+	return found
 }
 
-func TestShippedVerbRegistry(t *testing.T) {
-	shippedVerbs := []string{
-		"create", "ps", "exec", "start", "stop", "rm",
-		"version", "declare", "status", "list", "local-agent",
-		"help", "--help", "-h",
-		"space-create", "space-convert", "space-open-pane", "new-tab", "space-prune",
-		"default-shell",
-	}
-	declinedVerbs := []string{
-		"shell", "run", "attach", "ssh", "log", "snapshot",
-		"fork", "sandbox", "volume", "image", "cp", "auth",
-		"egress", "ls", "harvest", "orca", "pause", "reap",
-		"recover", "restore", "resume", "mcp", "doctor", "forward",
-		"supervisor-upgrade", "supervisor-backfill-netns-identity",
-	}
-
-	ctx := context.Background()
-	for _, verb := range shippedVerbs {
-		var stdout, stderr bytes.Buffer
-		Run(ctx, []string{verb}, &stdout, &stderr)
-		if strings.Contains(stderr.String(), "unknown command") {
-			t.Errorf("shipped verb %q: unexpected 'unknown command' in stderr: %s", verb, stderr.String())
-		}
-	}
-
-	for _, verb := range declinedVerbs {
-		var stdout, stderr bytes.Buffer
-		Run(ctx, []string{verb}, &stdout, &stderr)
-		if !strings.Contains(stderr.String(), "unknown command") {
-			t.Errorf("declined verb %q: expected 'unknown command' in stderr, got: %s", verb, stderr.String())
-		}
-	}
-}
-
-func TestDispatchSetEquality(t *testing.T) {
-	declared := map[string]bool{
-		"help": true, "--help": true, "-h": true,
-		"create": true, "ps": true, "exec": true,
-		"start": true, "stop": true, "rm": true,
-		"declare": true, "status": true, "list": true, "local-agent": true,
-		"version": true,
-		"space-create": true, "space-convert": true, "space-open-pane": true, "new-tab": true, "space-prune": true,
-		"default-shell": true,
-	}
-
+func dispatchCases(t *testing.T) map[string]bool {
+	t.Helper()
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "run.go", nil, 0)
 	if err != nil {
@@ -244,14 +197,73 @@ func TestDispatchSetEquality(t *testing.T) {
 		}
 	}
 
-	for verb := range found {
-		if !declared[verb] {
-			t.Errorf("run.go switch has undeclared case %q — add to declared set or remove the case", verb)
-		}
+	return found
+}
+
+func TestVerbRegistry(t *testing.T) {
+	registry := make(map[string]bool, len(shippedVerbs))
+	for _, v := range shippedVerbs {
+		registry[v] = true
 	}
-	for verb := range declared {
-		if !found[verb] {
-			t.Errorf("declared verb %q missing from run.go switch — was it removed?", verb)
-		}
+	dispatchable := make(map[string]bool, len(registry)+len(helpAliases))
+	for v := range registry {
+		dispatchable[v] = true
 	}
+	for _, v := range helpAliases {
+		dispatchable[v] = true
+	}
+
+	t.Run("usage_matches_registry", func(t *testing.T) {
+		found := usageVerbs(t)
+		foundSet := make(map[string]bool, len(found))
+		for _, v := range found {
+			foundSet[v] = true
+		}
+		for _, v := range shippedVerbs {
+			if !foundSet[v] {
+				t.Errorf("usage missing shipped verb %q", v)
+			}
+		}
+		for _, v := range found {
+			if !registry[v] {
+				t.Errorf("usage lists unregistered verb %q", v)
+			}
+		}
+		if len(found) != len(shippedVerbs) {
+			t.Errorf("usage verb count: got %d, want %d; found=%v", len(found), len(shippedVerbs), found)
+		}
+	})
+
+	t.Run("dispatch_matches_registry", func(t *testing.T) {
+		cases := dispatchCases(t)
+		for verb := range cases {
+			if !dispatchable[verb] {
+				t.Errorf("run.go switch has unregistered case %q — add it to shippedVerbs and usage, or remove the case", verb)
+			}
+		}
+		for verb := range dispatchable {
+			if !cases[verb] {
+				t.Errorf("registered verb %q missing from run.go switch — was it removed?", verb)
+			}
+		}
+	})
+
+	t.Run("declined_verbs_rejected", func(t *testing.T) {
+		cases := dispatchCases(t)
+		ctx := context.Background()
+		for _, verb := range declinedVerbs {
+			if cases[verb] {
+				t.Errorf("declined verb %q has a case in run.go switch", verb)
+				continue
+			}
+			var stdout, stderr bytes.Buffer
+			code := Run(ctx, []string{verb}, &stdout, &stderr)
+			if code != 2 {
+				t.Errorf("declined verb %q: expected exit 2, got %d", verb, code)
+			}
+			if !strings.Contains(stderr.String(), "unknown command") {
+				t.Errorf("declined verb %q: expected 'unknown command' in stderr, got: %s", verb, stderr.String())
+			}
+		}
+	})
 }
