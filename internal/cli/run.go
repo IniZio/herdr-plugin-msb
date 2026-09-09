@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"path/filepath"
 )
 
 const combinedUsage = `usage: herdr-plugin-msb <command>
@@ -11,7 +12,16 @@ const combinedUsage = `usage: herdr-plugin-msb <command>
 sandbox:  create  ps  exec  start  stop  rm
 plugin:   declare  status  list  local-agent
 space:    space-create  space-convert  space-open-pane  new-tab  space-prune
-other:    version  help`
+other:    default-shell  version  help`
+
+const GuestShellArgv0 = "herdr-plugin-msb-guest-shell"
+
+func NormalizeArgv(argv0 string, args []string) []string {
+	if filepath.Base(argv0) == GuestShellArgv0 {
+		return append([]string{"default-shell"}, args...)
+	}
+	return args
+}
 
 func Run(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
 	if len(argv) == 0 {
@@ -44,6 +54,8 @@ func Run(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
 		return runSpaceOpenPane(ctx, argv[1:], stdout, stderr)
 	case "new-tab":
 		return runNewTab(ctx, argv[1:], stdout, stderr)
+	case "default-shell":
+		return runDefaultShell(ctx, argv[1:], stdout, stderr)
 	case "space-prune":
 		return runSpacePrune(ctx, argv[1:], stdout, stderr)
 	case "version":

@@ -114,6 +114,7 @@ func TestUsageVerbs(t *testing.T) {
 		"create", "ps", "exec", "start", "stop", "rm",
 		"version", "declare", "status", "list", "local-agent", "help",
 		"space-create", "space-convert", "space-open-pane", "new-tab", "space-prune",
+		"default-shell",
 	}
 
 	var found []string
@@ -164,6 +165,7 @@ func TestShippedVerbRegistry(t *testing.T) {
 		"version", "declare", "status", "list", "local-agent",
 		"help", "--help", "-h",
 		"space-create", "space-convert", "space-open-pane", "new-tab", "space-prune",
+		"default-shell",
 	}
 	declinedVerbs := []string{
 		"shell", "run", "attach", "ssh", "log", "snapshot",
@@ -199,6 +201,7 @@ func TestDispatchSetEquality(t *testing.T) {
 		"declare": true, "status": true, "list": true, "local-agent": true,
 		"version": true,
 		"space-create": true, "space-convert": true, "space-open-pane": true, "new-tab": true, "space-prune": true,
+		"default-shell": true,
 	}
 
 	fset := token.NewFileSet()
