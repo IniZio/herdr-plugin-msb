@@ -84,9 +84,9 @@ func listSandboxRecords(ctx context.Context, cursor *string) ([]memRecordRef, *s
 	var page *msbsdk.SandboxPage
 	var err error
 	if cursor == nil {
-		page, err = msbsdk.ListSandboxes(ctx)
+		page, err = msbsdk.ListSandboxesWith(ctx, msbsdk.WithListLimit(1))
 	} else {
-		page, err = msbsdk.ListSandboxesWith(ctx, msbsdk.WithListCursor(*cursor))
+		page, err = msbsdk.ListSandboxesWith(ctx, msbsdk.WithListLimit(1), msbsdk.WithListCursor(*cursor))
 	}
 	if err != nil {
 		return nil, nil, err

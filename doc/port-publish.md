@@ -133,25 +133,21 @@ but should be rare enough to be acceptable.
 
 ## Range allocator schema coupling
 
-`internal/runtime/msb/rangealloc.go` derives block occupancy by querying the daemon's private SQLite database directly via `sqlite3`. This is an explicit coupling to daemon internals that is NOT covered by the SDK's public API.
+### Original sqlite3 design (removed 2026-09-09)
 
-### Schema elements depended on
+`rangealloc.go` previously derived block occupancy by querying the daemon's private SQLite database directly via `sqlite3`. Schema elements it depended on:
 
 - File: `$MSB_HOME/db/msb.db` (default `$HOME/.microsandbox/db/msb.db`)
-- Table: `sandbox`
-- Column: `config` — JSON text; port assignments at `$.network.ports[*].host_port`
-- Column: `status` — string; values `removed` and `removing` are excluded from the live set; all other values are treated as live
-- JSON path: `config->'$.network.ports'` accessed via sqlite3's `json_each()` and `->>` operator
+- Table: `sandbox`, column `config` — JSON at `$.network.ports[*].host_port`
+- Column: `status` — `removed` and `removing` excluded; all other values treated as live
 
-### Why ConfigJSON() per-handle iteration was rejected
+This coupling was introduced under the belief that the SDK list path overflowed for a single 10k-port sandbox. That belief was wrong — see CORRECTION block below. Once pagination was understood to make the SDK path viable, the sqlite3 coupling was removed.
 
-**CORRECTION (2026-09-09): the earlier 1.8 MiB figure was wrong and matched no
-measured single-sandbox port count. What follows replaces that record entirely.**
+### CORRECTION (2026-09-09): single-sandbox overflow claim was wrong
 
-`msbsdk.GetSandbox(name)` → `h.ConfigJSON()` is the SDK-sanctioned path for
-reading a sandbox's stored config. The `LookupSandbox` FFI function
-(`internal/ffi/ffi.go:1084`, `defaultBufSize = 1<<20`) uses a fixed 1 MiB output
-buffer with no configurable override in v0.6.17 and no retry-on-KindBufferTooSmall.
+**The earlier 1.8 MiB figure was wrong and matched no measured single-sandbox port count. What follows replaces that record entirely.**
+
+`msbsdk.GetSandbox(name)` → `h.ConfigJSON()` is the SDK-sanctioned path for reading a sandbox's stored config. The `LookupSandbox` FFI function (`internal/ffi/ffi.go:1084`, `defaultBufSize = 1<<20`) uses a fixed 1 MiB output buffer with no configurable override in v0.6.17 and no retry-on-KindBufferTooSmall.
 
 **Measured single-sandbox figures (2026-09-09, alpine, v0.6.17 daemon):**
 
@@ -162,53 +158,34 @@ buffer with no configurable override in v0.6.17 and no retry-on-KindBufferTooSma
 | 12,000    | ErrBufferTooSmall   | `need 1,091,914`         |
 | 13,000    | ErrBufferTooSmall   | `need 1,183,914`         |
 
-Single-sandbox overflow threshold: ~11,500 ports (~92 bytes/port in the raw FFI
-buffer; configJSON field itself is ~79 bytes/port after JSON unmarshal). A 10,000-port
-sandbox has a configJSON of ~787 KB and fits with ~140 KB headroom. `GetSandbox` and
-`assertNetworkPolicyByName` both succeed on a 10,000-port sandbox; the security check
-is not degraded.
+Single-sandbox overflow threshold: ~11,500 ports. A 10,000-port sandbox has a configJSON of ~787 KB and fits with ~140 KB headroom. `GetSandbox` and `assertNetworkPolicyByName` both succeed on a 10,000-port sandbox; the security check is not degraded.
 
-**The real overflow is in `ListSandboxes` across multiple sandboxes:**
-
-The list response serialises the full `SandboxHandleInfo` (including `config_json`)
-for every sandbox into the same 1 MiB buffer. With two 10,000-port sandboxes live,
-`ListSandboxes(ctx)` overflows immediately:
+**The real overflow is in `ListSandboxes` across multiple sandboxes:** The list response serialises the full `SandboxHandleInfo` (including `config_json`) for every sandbox into the same 1 MiB buffer. With two 10,000-port sandboxes live, `ListSandboxes(ctx)` overflows immediately:
 
 ```
 output buffer too small: need 1820835, have 1048576
 ```
 
-(The previously-recorded `need 1821601` came from this two-sandbox list call, not
-from a single `GetSandbox` — the original attribution to a single sandbox was wrong.)
+(The previously-recorded `need 1821601` came from this two-sandbox list call, not from a single `GetSandbox` — the original attribution to a single sandbox was wrong.)
 
-With six 10,000-port sandboxes (the D-24 maximum), `ListSandboxes` returns
-`ErrBufferTooSmall` on the first call. **This is a live bug in the current code:**
-`lifecycle.go:13` and `admission.go:87` both call `msbsdk.ListSandboxes(ctx)` with
-no page limit, which will fail as soon as a second 10,000-port sandbox exists.
+With six 10,000-port sandboxes (the D-24 maximum), `ListSandboxes` returns `ErrBufferTooSmall` on the first call. This was a live bug: `lifecycle.go` and `admission.go` both called `msbsdk.ListSandboxes(ctx)` with no page limit, failing as soon as a second 10,000-port sandbox existed.
 
-**Pagination rescues the list path:** `ListSandboxesWith(ctx, WithListLimit(1))`
-returns one sandbox per page (~908 KB each) and never overflows regardless of how
-many sandboxes exist. Following `page.NextCursor` to pagination was confirmed
-successful over all 6 concurrent 10,000-port sandboxes (6 pages, each
-`ErrBufferTooSmall`-free). The `sumCommittedMiB` loop in `admission.go` already
-has cursor-following logic; it only needs `WithListLimit(1)` added to the initial
-call (and to the cursor calls) in `listSandboxRecords`.
+### Current SDK path (as of 2026-09-09)
 
-**Implication for the sqlite3 coupling:** The sqlite3 path in `rangealloc.go` is NOT
-strictly necessary to avoid buffer overflow — the SDK path is viable if
-`WithListLimit(1)` is applied. It was chosen as a simpler and more direct query
-(a single SQL join rather than N paginated SDK calls) but the stated justification
-that the SDK path was impossible was incorrect. Whether to revert the sqlite3 coupling
-to the paginated SDK path is a design decision for the operator.
+`rangealloc.go` now derives occupancy via `ListSandboxesWith(ctx, WithListLimit(1))`, following `page.NextCursor` until exhausted. Each page returns one sandbox (~908 KB), safely under the 1 MiB FFI buffer regardless of how many sandboxes exist. The same `WithListLimit(1)` was applied to `lifecycle.go` and `admission.go`.
 
-### Failure mode on schema change
+**Any new call to `ListSandboxes` or `ListSandboxesWith` without `WithListLimit(1)` will overflow as soon as a second 10k-port sandbox exists. Always paginate at limit 1.**
 
-`daemonOccupiedBlocks` runs a corroboration check: it counts live sandboxes (`SELECT COUNT(*) FROM sandbox WHERE status NOT IN ('removed','removing')`), then queries ports. If the sandbox count is positive but the ports query returns zero rows, it returns an error naming schema drift as the likely cause. This ensures a schema change surfaces as a loud `rangealloc: N live sandbox(es) in DB but no ports visible` error on the next `CreateAndBoot`, rather than a silent total collision where every sandbox is handed block 0.
+Host ports are read from `h.ConfigJSON()` at `$.network.ports[*].host_port` (struct `portsConfigRecord`). Do NOT use `(*SandboxHandle).Config().Network` — it is structurally always nil in v0.6.17, so any zero-value check on it passes vacuously.
 
-### Failure mode when sqlite3 is absent
+### Corroboration check
 
-Both `Allocate` and `CheckCollision` fail closed if `sqlite3` is not on PATH: `exec.Command("sqlite3", ...)` returns a non-zero exit and the error propagates as `rangealloc: sqlite3 sandbox count: exec: "sqlite3": executable file not found in $PATH` (or similar). `CreateAndBoot` aborts before any sandbox is created.
+`occupiedBlocksFrom` counts live sandboxes and ports visible in the managed range. If live sandboxes exist but zero ports are visible in `[rangeAllocBase, rangeAllocBase + rangeMaxBlocks*rangeBlockSize - 1]`, it returns an error naming SDK/daemon schema drift as the likely cause. This ensures a schema change surfaces loudly on the next `CreateAndBoot`, rather than silently returning all-free and handing every sandbox block 0.
+
+### Ownership awareness
+
+A block is marked occupied if ANY live sandbox publishes a host port inside that block's range — not just the base port. This covers the case where a sandbox was created with block 0 but port `rangeAllocBase` was silently skipped by microsandbox due to a host conflict: other ports in the block are still visible and correctly mark the block occupied. `TestOccupiedBlocksOwnershipHole` (unit) and `TestLiveRangeAllocOwnershipHole` (live) both verify this property with a negative control.
 
 ### Stability note
 
-microsandbox ships schema changes without notice. Any rename of the `sandbox` table, relocation of `$.network.ports`, or new status vocabulary values will surface via the corroboration check at worst, or as a sqlite3 error at best.
+microsandbox ships schema changes without notice. Any relocation of `network.ports[*].host_port` in `ConfigJSON()` will surface via the corroboration check, since existing sandboxes would show `liveCount > 0, portCount == 0`.

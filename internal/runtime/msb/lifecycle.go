@@ -10,7 +10,7 @@ import (
 
 func (r *Runtime) List(ctx context.Context) ([]coreruntime.SandboxRef, error) {
 	refs := []coreruntime.SandboxRef{}
-	page, err := msbsdk.ListSandboxes(ctx)
+	page, err := msbsdk.ListSandboxesWith(ctx, msbsdk.WithListLimit(1))
 	if err != nil {
 		return nil, fmt.Errorf("msb: list: %w", err)
 	}
@@ -18,7 +18,7 @@ func (r *Runtime) List(ctx context.Context) ([]coreruntime.SandboxRef, error) {
 		refs = append(refs, refFromHandle(h))
 	}
 	for page.NextCursor != nil {
-		page, err = msbsdk.ListSandboxesWith(ctx, msbsdk.WithListCursor(*page.NextCursor))
+		page, err = msbsdk.ListSandboxesWith(ctx, msbsdk.WithListLimit(1), msbsdk.WithListCursor(*page.NextCursor))
 		if err != nil {
 			return nil, fmt.Errorf("msb: list (cursor): %w", err)
 		}
