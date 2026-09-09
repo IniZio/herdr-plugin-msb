@@ -25,6 +25,19 @@ func TestRenderPortsPane_NoAgentState(t *testing.T) {
 	}
 }
 
+func TestRenderPortsPane_NoLaunchd(t *testing.T) {
+	out := RenderPortsPane(nil, 0, time.Now())
+	if strings.Contains(out, "launchd") {
+		t.Errorf("nil-state text must not mention launchd: %q", out)
+	}
+	if strings.Contains(out, "Install local agent") {
+		t.Errorf("nil-state text must not mention Install local agent: %q", out)
+	}
+	if !strings.Contains(out, "herdr --remote") {
+		t.Errorf("nil-state text must mention herdr --remote: %q", out)
+	}
+}
+
 func TestRenderPortsPane_LiveForward(t *testing.T) {
 	state := &ForwardsState{
 		UpdatedAt: time.Now(),

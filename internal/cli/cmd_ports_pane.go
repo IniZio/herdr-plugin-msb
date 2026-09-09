@@ -47,7 +47,6 @@ const (
 	KeyJ     PaneKey = 'j'
 	KeyK     PaneKey = 'k'
 	KeyEnter PaneKey = '\r'
-	KeyD     PaneKey = 'd'
 	KeyR     PaneKey = 'r'
 	KeyQ     PaneKey = 'q'
 )
@@ -80,8 +79,8 @@ func RenderPortsPane(state *ForwardsState, cursor int, now time.Time) string {
 			paneSep + "\n" +
 			"  laptop agent not connected\n" +
 			"  forwards.state not found\n\n" +
-			"  If the launchd service is installed it will connect within 30s.\n" +
-			"  To install: open action menu → \"Install local agent\"\n\n" +
+			"  Run: herdr --remote <target>  (starts agent via the zshrc shim)\n" +
+			"  Setup: doc/portfwd-operator-guide.md §1\n\n" +
 			"  q  close pane\n"
 	}
 
@@ -153,9 +152,9 @@ func paneFooter(status string) string {
 	case PFStatusPending:
 		return "j/k  select   q  close"
 	case PFStatusError:
-		return "j/k  select   d  re-declare this port   q  close"
+		return "j/k  select   q  close"
 	case PFStatusExpired:
-		return "d  re-declare this port   q  close"
+		return "q  close"
 	case PFStatusOutRange:
 		return "j/k  select   r  add port (recreates)   q  close"
 	case "":

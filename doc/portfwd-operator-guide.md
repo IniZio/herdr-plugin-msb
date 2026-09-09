@@ -111,15 +111,14 @@ Port forwards — (no sandbox)
   laptop agent not connected
   forwards.state not found
 
-  If the launchd service is installed it will connect within 30s.
-  To install: open action menu → "Install local agent"
+  Run: herdr --remote <target>  (starts agent via the zshrc shim)
+  Setup: doc/portfwd-operator-guide.md §1
 
   q  close pane
 ```
 
-The "Install local agent" action and launchd service do not exist; that text
-is stale in the pane's code. If the agent is not running, start it manually —
-see §6.
+The agent is started automatically by `herdr --remote <target>` once the
+zshrc shim from §1 is in place. If it still does not connect, see §6.
 
 **Agent connected, no ports in state:**
 
@@ -189,7 +188,7 @@ Port forwards — my-sandbox
 ─────────────────────────────────────────────
 > 3000   ERROR   host mismatch: declared for "engine-04", agent is "engine-03"
 
-  j/k  select   d  re-declare this port   q  close
+  j/k  select   q  close
 ```
 
 **A port is EXPIRED:**
@@ -199,7 +198,7 @@ Port forwards — my-sandbox
 ─────────────────────────────────────────────
 > 3000   EXPIRED request made 12m ago; expired before agent acked (TTL 10m)
 
-  d  re-declare this port   q  close
+  q  close
 ```
 
 **A port is OUT-OF-RANGE (guest port above 11023):**
@@ -270,7 +269,6 @@ real ctrl+click. Evidence: RUN B, 2026-09-09, `doc/probes/linkenv-probe.md`.
 | `Enter` | PENDING             | No-op (request already in flight)                 |
 | `Enter` | ERROR or EXPIRED    | No-op                                             |
 | `Enter` | OUT-OF-RANGE        | Enqueue request (agent will reject; use `r`)      |
-| `d`     | ERROR or EXPIRED    | No-op (key is defined but dispatch not yet wired) |
 | `r`     | any                 | Show recreate warning (§5)                        |
 | `q`     | any                 | Close pane                                        |
 | `j`     | any                 | Move cursor down one row                          |
@@ -338,16 +336,15 @@ sleep (`master keepalive expired`).
 ### ERROR — host mismatch
 
 The forward was declared for a different engine than the one the agent is
-watching. The `d` key to re-declare is not yet wired. Re-enqueue by
-ctrl+clicking the URL again, which writes a fresh request for the current
-engine.
+watching. Re-enqueue by ctrl+clicking the URL again, which writes a fresh
+request for the current engine.
 
 ### EXPIRED — agent was not running when the request was made
 
-The request aged out (TTL 10 minutes) before the agent processed it. The
-`d` key is not yet wired. Re-enqueue by ctrl+clicking the URL or pressing
-Enter on the row (it will stay in ERROR or EXPIRED until the state is
-refreshed by the agent on next connect).
+The request aged out (TTL 10 minutes) before the agent processed it.
+Re-enqueue by ctrl+clicking the URL or pressing Enter on the row (it will
+stay in ERROR or EXPIRED until the state is refreshed by the agent on next
+connect).
 
 ### Stale state (WARNING in pane)
 
