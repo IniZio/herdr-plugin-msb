@@ -21,14 +21,14 @@ func NewManager(fw *Forwarder) *Manager {
 }
 
 func (m *Manager) Reconcile(ctx context.Context, desired []Listener) error {
-	running := make(map[string]struct{})
+	desiredSet := make(map[fwdKey]struct{}, len(desired))
 	for _, l := range desired {
 		if l.Sandbox.Status == runtime.SandboxStatusRunning {
-			running[l.Sandbox.ID] = struct{}{}
+			desiredSet[fwdKey{sandboxID: l.Sandbox.ID, port: l.Port}] = struct{}{}
 		}
 	}
 	for key := range m.applied {
-		if _, ok := running[key.sandboxID]; !ok {
+		if _, ok := desiredSet[key]; !ok {
 			if err := m.fw.Cancel(ctx, key.port); err != nil {
 				return err
 			}

@@ -106,6 +106,32 @@ func TestReconcileCancelOnVanished(t *testing.T) {
 	}
 }
 
+func TestReconcileCancelOnPortGone(t *testing.T) {
+	mgr, calls := makeMgr([]runResp{
+		{code: 0},
+		{code: 0},
+		{code: 0},
+		{code: 0},
+		{code: 0},
+	})
+	ref := runtime.SandboxRef{ID: "abc", Status: runtime.SandboxStatusRunning}
+	if err := mgr.Reconcile(context.Background(), []Listener{{Port: 3000, Sandbox: ref}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Reconcile(context.Background(), []Listener{{Port: 4000, Sandbox: ref}}); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, argv := range *calls {
+		if len(argv) >= 3 && argv[1] == "-O" && argv[2] == "cancel" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no ssh -O cancel found in calls=%v", *calls)
+	}
+}
+
 func TestTeardownSandbox(t *testing.T) {
 	mgr, calls := makeMgr([]runResp{
 		{code: 0},
