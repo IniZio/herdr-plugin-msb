@@ -23,7 +23,6 @@ const (
 type Runtime struct {
 	acct  admission.Accountant
 	alloc *RangeAllocator
-	uid   *UidBoundary
 }
 
 var _ coreruntime.Runtime = (*Runtime)(nil)
@@ -231,11 +230,6 @@ func (r *Runtime) CreateAndBoot(ctx context.Context, spec coreruntime.SandboxSpe
 			return coreruntime.SandboxRef{}, errors.Join(cerr, teardownHandle(ctx, h))
 		}
 	}
-	if r.uid != nil && allocatedBase > 0 {
-		if uerr := r.uid.Apply(ctx, allocatedBase); uerr != nil {
-			return coreruntime.SandboxRef{}, errors.Join(uerr, teardownHandle(ctx, h))
-		}
-	}
 	return refFromHandle(h), nil
 }
 
@@ -244,20 +238,11 @@ func (r *Runtime) Remove(ctx context.Context, ref coreruntime.SandboxRef) error 
 	if err != nil {
 		return err
 	}
-	var uidBase uint16
-	if r.uid != nil {
-		uidBase = baseFromConfigJSON(h.ConfigJSON())
-	}
 	if err := h.Remove(ctx); err != nil {
 		return fmt.Errorf("msb: remove %q: %w", h.Name(), err)
 	}
 	if r.alloc != nil {
 		r.alloc.Free(h.Name())
-	}
-	if r.uid != nil && uidBase > 0 {
-		if rerr := r.uid.Remove(ctx, uidBase); rerr != nil {
-			return rerr
-		}
 	}
 	return nil
 }
