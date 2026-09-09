@@ -76,11 +76,20 @@ exit 1. So the laptop agent can raise a pane on the engine by calling
 via the existing `ExecArgv` helper (:104-106). No local herdr socket needed.
 Agent-push IS available; Option 3 is no longer blocked on OQ-3 for availability.
 
-**CONTROL REPAIRED.** The `setsid` control above varied the *plugin name*, not the
-TTY condition, so it could not distinguish "tolerates no TTY" from "never checks".
-A valid control now exists: bare `herdr` through the identical wrapper panics —
-`failed to initialize terminal: Os { code: 6, ... "No such device or address" }`,
-exit 101. The wrapper does strip the TTY in a way herdr notices.
+**CONTROL REPAIRED, WITH A LIMIT — read this before citing it.** The `setsid`
+control above varied the *plugin name*, not the TTY condition, so it could not
+distinguish "tolerates no TTY" from "never checks". Bare `herdr` through the
+identical wrapper panics — `failed to initialize terminal: Os { code: 6, ...
+"No such device or address" }`, exit 101 — which establishes that the wrapper
+strips the controlling terminal in a way the OS enforces.
+
+It does NOT establish that `herdr plugin pane open` is TTY-independent. The TUI
+calls into ratatui and needs a terminal; `pane open` writes JSON to a Unix socket
+and exits. One failing without a TTY licenses nothing about the other tolerating
+its absence — they are different classes of program. **Never cite this control
+standalone as proof that `pane open` needs no TTY; that argument is invalid.**
+The load-bearing evidence is the ssh-exec re-run below, which exercises the real
+command in the real environment.
 
 **RE-RUN THROUGH A REAL SSH EXEC CHANNEL**, since `setsid` only simulates one.
 Opened pane `w83:pF` with `"type":"plugin_pane_opened"`, confirmed in
