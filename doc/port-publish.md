@@ -145,7 +145,61 @@ but should be rare enough to be acceptable.
 
 ### Why ConfigJSON() per-handle iteration was rejected
 
-`msbsdk.GetSandbox(name)` → `h.ConfigJSON()` is the SDK-sanctioned path for reading a sandbox's stored config. It was rejected because `LookupSandbox` (the FFI backing both `GetSandbox` and `ListSandboxes`) uses a fixed 1 MiB output buffer (`defaultBufSize = 1<<20` in `internal/ffi/ffi.go`). A 10,000-port sandbox config is approximately 1.8 MiB; any `GetSandbox` or `ListSandboxes` call on such a sandbox overflows the buffer and returns `KindBufferTooSmall`. There is no configurable override in v0.6.17. Verified: `output buffer too small: need 1821601, have 1048576`.
+**CORRECTION (2026-09-09): the earlier 1.8 MiB figure was wrong and matched no
+measured single-sandbox port count. What follows replaces that record entirely.**
+
+`msbsdk.GetSandbox(name)` → `h.ConfigJSON()` is the SDK-sanctioned path for
+reading a sandbox's stored config. The `LookupSandbox` FFI function
+(`internal/ffi/ffi.go:1084`, `defaultBufSize = 1<<20`) uses a fixed 1 MiB output
+buffer with no configurable override in v0.6.17 and no retry-on-KindBufferTooSmall.
+
+**Measured single-sandbox figures (2026-09-09, alpine, v0.6.17 daemon):**
+
+| Port count | `GetSandbox` result | Buffer needed (Rust-side) |
+|-----------|---------------------|--------------------------|
+| 10,000    | OK                  | ~908 KB (fits)           |
+| 11,000    | OK                  | ~1,000 KB (fits)         |
+| 12,000    | ErrBufferTooSmall   | `need 1,091,914`         |
+| 13,000    | ErrBufferTooSmall   | `need 1,183,914`         |
+
+Single-sandbox overflow threshold: ~11,500 ports (~92 bytes/port in the raw FFI
+buffer; configJSON field itself is ~79 bytes/port after JSON unmarshal). A 10,000-port
+sandbox has a configJSON of ~787 KB and fits with ~140 KB headroom. `GetSandbox` and
+`assertNetworkPolicyByName` both succeed on a 10,000-port sandbox; the security check
+is not degraded.
+
+**The real overflow is in `ListSandboxes` across multiple sandboxes:**
+
+The list response serialises the full `SandboxHandleInfo` (including `config_json`)
+for every sandbox into the same 1 MiB buffer. With two 10,000-port sandboxes live,
+`ListSandboxes(ctx)` overflows immediately:
+
+```
+output buffer too small: need 1820835, have 1048576
+```
+
+(The previously-recorded `need 1821601` came from this two-sandbox list call, not
+from a single `GetSandbox` — the original attribution to a single sandbox was wrong.)
+
+With six 10,000-port sandboxes (the D-24 maximum), `ListSandboxes` returns
+`ErrBufferTooSmall` on the first call. **This is a live bug in the current code:**
+`lifecycle.go:13` and `admission.go:87` both call `msbsdk.ListSandboxes(ctx)` with
+no page limit, which will fail as soon as a second 10,000-port sandbox exists.
+
+**Pagination rescues the list path:** `ListSandboxesWith(ctx, WithListLimit(1))`
+returns one sandbox per page (~908 KB each) and never overflows regardless of how
+many sandboxes exist. Following `page.NextCursor` to pagination was confirmed
+successful over all 6 concurrent 10,000-port sandboxes (6 pages, each
+`ErrBufferTooSmall`-free). The `sumCommittedMiB` loop in `admission.go` already
+has cursor-following logic; it only needs `WithListLimit(1)` added to the initial
+call (and to the cursor calls) in `listSandboxRecords`.
+
+**Implication for the sqlite3 coupling:** The sqlite3 path in `rangealloc.go` is NOT
+strictly necessary to avoid buffer overflow — the SDK path is viable if
+`WithListLimit(1)` is applied. It was chosen as a simpler and more direct query
+(a single SQL join rather than N paginated SDK calls) but the stated justification
+that the SDK path was impossible was incorrect. Whether to revert the sqlite3 coupling
+to the paginated SDK path is a design decision for the operator.
 
 ### Failure mode on schema change
 
