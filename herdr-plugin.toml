@@ -76,3 +76,16 @@ id = "local-port"
 title = "Local Port"
 pattern = 'http://127\.0\.0\.1:\d+'
 action = "ports-declare"
+
+[[actions]]
+id = "linkenv-probe-dump"
+title = "Link Env Probe (dump argv + env)"
+command = ["sh", "-c", 'F=/tmp/herdr-linkenv-probe.txt; { printf "=== argv: %s\n" "$@"; env | sort; } > "$F" 2>&1', "_"]
+contexts = ["workspace"]
+platforms = ["linux"]
+
+[[link_handlers]]
+id = "linkenv-probe"
+title = "Link Env Probe"
+pattern = 'http://127\.0\.0\.2:59999'
+action = "linkenv-probe-dump"
