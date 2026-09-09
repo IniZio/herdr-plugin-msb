@@ -22,15 +22,56 @@ of it.
 ## Where the budget comes from
 
 The budget is read from the environment variable `HERDR_MSB_HOST_RAM_BUDGET_MIB`. When the
-variable is absent or empty the budget defaults to `admission.DefaultHostBudgetMiB`, which is
-8192 MiB.
+variable is absent or empty the budget is **derived from the host's real RAM**:
+`admission.DefaultBudgetMiB()` reads `MemTotal` from `/proc/meminfo` and returns
+`MemTotal / HostBudgetDivisor`, with `HostBudgetDivisor = 4` — **one quarter of total host
+RAM**. The env override is unchanged and still wins outright: a set, non-empty, positive
+integer is used verbatim, whatever the host's RAM.
 
-That default is conservative by design. The development host measures 31200 MiB total with
-roughly 6300 MiB already in use; 8192 MiB is about a quarter of total host RAM, leaving the
-host, the desktop session, and the build and test toolchain ample unswappable headroom. The
-default is a floor chosen for safety, not a measurement of what the host could bear. Operators
-on larger hosts raise it deliberately by setting the env var; they should not need to on the
-development host.
+### Why one quarter
+
+The quarter is anchored on the figure the previous absolute constant encoded. The development
+host measures 31200 MiB total with roughly 6300 MiB already in use, and the old constant of
+8192 MiB was about a quarter of that — a ratio that had been lived with and had proved to leave
+the host, the desktop session, and the build and test toolchain ample unswappable headroom.
+Making the ratio the rule rather than the arithmetic accident preserves that behaviour on this
+host while making it scale.
+
+The headroom argument is what fixes the fraction, and it is a *fraction* argument, not an
+absolute one: guest RAM is unswappable, so the budget must leave room for the host kernel, the
+desktop session, the browser and editor an operator actually works in, and the Go toolchain,
+all of which grow roughly with the size of the machine rather than staying at a fixed number of
+MiB. A half would leave a 16 GiB laptop with 8 GiB for everything else including page cache —
+survivable only if nothing else is running. A quarter leaves three quarters, which absorbs both
+the resident working set and the check-then-create race noted under *Two stated limits*.
+It is deliberately not a measurement of what a host could bear; it is a floor chosen for
+safety, and operators who know their machine raise it with the env var.
+
+On this host the derived default is `31949300 kB / 1024 / 4 = 7800 MiB`, against the previous
+8192 MiB — a 392 MiB tightening, and still far above the ~3072 MiB currently committed by the
+two running sandboxes. On an 8 GiB host it is 2048 MiB, where the old constant was 8192 MiB and
+therefore admitted right up to and past total RAM.
+
+### When `MemTotal` cannot be read
+
+If `/proc/meminfo` is absent, unreadable, carries no `MemTotal` line, or carries one that does
+not parse (including a zero or implausible value), `DefaultBudgetMiB()` returns
+`admission.FallbackHostBudgetMiB`, which is **2048 MiB**.
+
+Falling back to a *small* floor rather than refusing outright is the deliberate choice, and the
+size is what makes it safe. Refusing outright was considered: it is the strictest reading of
+fail-closed, but it turns any host without a procfs `MemTotal` — a non-Linux host, a stripped
+container, a hardened mount namespace — into one where no sandbox can be created at all, and
+the pressure that creates is for an operator to set `HERDR_MSB_HOST_RAM_BUDGET_MIB` to whatever
+number makes the error go away, which is a worse outcome than a small honest default.
+
+What must never happen is falling back to a *large* constant, because the machines where
+`MemTotal` is unavailable are not correlated with machines that have RAM to spare — that is
+exactly the defect being fixed, reintroduced on the unreadable path. 2048 MiB is below the
+quarter-budget of any host of 8 GiB or more, so on every host where the fallback fires the
+guard refuses strictly more than a correct reading would have. It is also below
+`MaxSandboxMemoryMiB` (8192), so a single maximum-size sandbox is refused outright under the
+fallback. Fail-safe here means refusing more, never admitting more.
 
 ## How committed memory is measured
 
@@ -201,11 +242,16 @@ figure and both pass a budget that admits only one. The worst case is overshooti
 a single sandbox, and creates here are operator- or hook-driven and so effectively serialized.
 This is a stated assumption of the design, not a promise to fix.
 
-**On a small host the default budget is inert.** `DefaultHostBudgetMiB` is an absolute constant
-of 8192 MiB, unrelated to the actual RAM of the machine it runs on. The reasoning above measures
-it against this 31200 MiB host, where it is a genuine ceiling, and advises operators on *larger*
-hosts to raise it. On a host of 8 GiB or less the default equals or exceeds total RAM, so the
-guard never refuses anything the host could not already have been killed for — it is inert
-exactly where it would matter most. Operators on such hosts must set
-`HERDR_MSB_HOST_RAM_BUDGET_MIB` to a figure below their real RAM; the env override is the only
-way the default is changed.
+**The budget ignores what the host is already using.** The default is a fraction of `MemTotal`,
+not of free memory, so it does not shrink when the operator's own browser, editor and toolchain
+grow. The three-quarters left unbudgeted is the whole of the allowance for that, and it is a
+static allowance. A host already deep into its RAM before any sandbox starts can still admit up
+to a quarter of total; measuring `MemAvailable` instead was rejected because it makes admission
+depend on a figure that moves between the check and the create, and a budget that shifts under
+the caller is harder to reason about than one that is conservative and fixed. Operators who
+routinely run the host hot should lower `HERDR_MSB_HOST_RAM_BUDGET_MIB` explicitly.
+
+Superseded: the default budget was formerly an absolute 8192 MiB constant unrelated to the RAM
+of the machine, which made the guard inert on any host of 8 GiB or less — it admitted right up
+to and past total RAM exactly where over-commit bites hardest. Deriving the default from
+`MemTotal` (above) closes that.

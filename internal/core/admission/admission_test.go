@@ -4,9 +4,32 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
+
+func withMeminfo(t *testing.T, body string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "meminfo")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write fake meminfo: %v", err)
+	}
+	withMeminfoPath(t, path)
+}
+
+func withMeminfoPath(t *testing.T, path string) {
+	t.Helper()
+	prev := meminfoPath
+	meminfoPath = path
+	t.Cleanup(func() { meminfoPath = prev })
+}
+
+func meminfoBody(memTotalKiB uint64) string {
+	return "MemFree:         1000 kB\nMemTotal:       " +
+		strconv.FormatUint(memTotalKiB, 10) + " kB\nSwapTotal:          0 kB\n"
+}
 
 type stubAccountant struct {
 	committed uint32
@@ -74,18 +97,109 @@ func TestAdmit_AccountantError(t *testing.T) {
 
 func TestAdmit_OppositeOutcomes(t *testing.T) {
 	ctx := context.Background()
+	withMeminfo(t, meminfoBody(32*1024*1024))
+	t.Setenv(BudgetEnvVar, "")
 	under := &stubAccountant{committed: 2048}
 	if err := Admit(ctx, under, 512); err != nil {
 		t.Errorf("under budget: want nil, got %v", err)
 	}
-	over := &stubAccountant{committed: 8000}
+	over := &stubAccountant{committed: 7800}
 	if err := Admit(ctx, over, 512); !errors.Is(err, ErrBudgetExceeded) {
 		t.Errorf("over budget: want ErrBudgetExceeded, got %v", err)
 	}
 }
 
+func TestDefaultBudgetMiB_ScalesWithHostRAM(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		totKiB  uint64
+		wantMiB uint32
+	}{
+		{"8 GiB host", 8 * 1024 * 1024, 2048},
+		{"31200 MiB host", 31949300, 7800},
+		{"128 GiB host", 128 * 1024 * 1024, 32768},
+		{"2 GiB host", 2 * 1024 * 1024, 512},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withMeminfo(t, meminfoBody(tc.totKiB))
+			if got := DefaultBudgetMiB(); got != tc.wantMiB {
+				t.Errorf("DefaultBudgetMiB() = %d, want %d", got, tc.wantMiB)
+			}
+		})
+	}
+}
+
+func TestAdmit_SameCreateRefusedOnSmallHostAdmittedOnLarge(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv(BudgetEnvVar, "")
+	acct := &stubAccountant{committed: 1024}
+	const requested = uint32(2048)
+
+	withMeminfo(t, meminfoBody(8*1024*1024))
+	if err := Admit(ctx, acct, requested); !errors.Is(err, ErrBudgetExceeded) {
+		t.Errorf("8 GiB host: want ErrBudgetExceeded, got %v", err)
+	}
+
+	withMeminfo(t, meminfoBody(64*1024*1024))
+	if err := Admit(ctx, acct, requested); err != nil {
+		t.Errorf("64 GiB host: want nil, got %v", err)
+	}
+}
+
+func TestDefaultBudgetMiB_UnreadableMemTotalFallsBackToFloor(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		gone bool
+	}{
+		{name: "missing file", gone: true},
+		{name: "no MemTotal line", body: "MemFree: 1000 kB\n"},
+		{name: "unparsable MemTotal", body: "MemTotal:       notanumber kB\n"},
+		{name: "truncated MemTotal line", body: "MemTotal:\n"},
+		{name: "zero MemTotal", body: meminfoBody(0)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.gone {
+				withMeminfoPath(t, filepath.Join(t.TempDir(), "absent"))
+			} else {
+				withMeminfo(t, tc.body)
+			}
+			got := DefaultBudgetMiB()
+			if got != FallbackHostBudgetMiB {
+				t.Errorf("DefaultBudgetMiB() = %d, want fallback %d", got, FallbackHostBudgetMiB)
+			}
+			if got >= 8192 {
+				t.Errorf("fallback %d must be far below the old 8192 constant", got)
+			}
+		})
+	}
+}
+
+func TestAdmit_UnreadableMemTotalRefusesLargeCreate(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv(BudgetEnvVar, "")
+	withMeminfoPath(t, filepath.Join(t.TempDir(), "absent"))
+	acct := &stubAccountant{committed: 0}
+	if err := Admit(ctx, acct, 4096); !errors.Is(err, ErrBudgetExceeded) {
+		t.Errorf("unreadable MemTotal, 4096 MiB request: want ErrBudgetExceeded, got %v", err)
+	}
+	if err := Admit(ctx, acct, 1024); err != nil {
+		t.Errorf("unreadable MemTotal, 1024 MiB request: want nil, got %v", err)
+	}
+}
+
+func TestBudget_EnvOverrideBeatsDerivedBudget(t *testing.T) {
+	withMeminfo(t, meminfoBody(8*1024*1024))
+	t.Setenv(BudgetEnvVar, "20480")
+	mib, err := Budget()
+	if err != nil || mib != 20480 {
+		t.Errorf("override on an 8 GiB host: got (%d, %v), want (20480, nil)", mib, err)
+	}
+}
+
 func TestBudget(t *testing.T) {
 	t.Run("unset", func(t *testing.T) {
+		withMeminfo(t, meminfoBody(8*1024*1024))
 		prev, had := os.LookupEnv(BudgetEnvVar)
 		os.Unsetenv(BudgetEnvVar)
 		t.Cleanup(func() {
@@ -96,17 +210,18 @@ func TestBudget(t *testing.T) {
 			}
 		})
 		mib, err := Budget()
-		if err != nil || mib != DefaultHostBudgetMiB {
-			t.Errorf("unset: got (%d, %v), want (%d, nil)", mib, err, DefaultHostBudgetMiB)
+		if err != nil || mib != 2048 {
+			t.Errorf("unset on an 8 GiB host: got (%d, %v), want (2048, nil)", mib, err)
 		}
 	})
+	withMeminfo(t, meminfoBody(8*1024*1024))
 	for _, tc := range []struct {
 		name    string
 		val     string
 		wantMiB uint32
 		wantErr error
 	}{
-		{"empty string", "", DefaultHostBudgetMiB, nil},
+		{"empty string", "", 2048, nil},
 		{"valid", "4096", 4096, nil},
 		{"zero", "0", 0, ErrBudgetInvalid},
 		{"not a number", "notanumber", 0, ErrBudgetInvalid},

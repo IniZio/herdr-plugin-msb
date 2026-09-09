@@ -1,17 +1,20 @@
 package admission
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 )
 
 const (
-	BudgetEnvVar         = "HERDR_MSB_HOST_RAM_BUDGET_MIB"
-	DefaultHostBudgetMiB = uint32(8192)
-	MaxSandboxMemoryMiB  = uint32(8192)
+	BudgetEnvVar          = "HERDR_MSB_HOST_RAM_BUDGET_MIB"
+	MaxSandboxMemoryMiB   = uint32(8192)
+	HostBudgetDivisor     = uint64(4)
+	FallbackHostBudgetMiB = uint32(2048)
 )
 
 var (
@@ -21,14 +24,60 @@ var (
 	ErrRequestInvalid   = errors.New("admission: requested memory must be greater than zero")
 )
 
+var meminfoPath = "/proc/meminfo"
+
 type Accountant interface {
 	CommittedMemoryMiB(ctx context.Context) (uint32, error)
+}
+
+func hostMemTotalMiB(path string) (uint32, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "MemTotal:") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			return 0, fmt.Errorf("%s: malformed MemTotal line %q", path, line)
+		}
+		kib, err := strconv.ParseUint(fields[1], 10, 64)
+		if err != nil {
+			return 0, fmt.Errorf("%s: unparsable MemTotal %q: %w", path, fields[1], err)
+		}
+		mib := kib / 1024
+		if mib == 0 || mib > uint64(^uint32(0)) {
+			return 0, fmt.Errorf("%s: implausible MemTotal %d kB", path, kib)
+		}
+		return uint32(mib), nil
+	}
+	if err := scanner.Err(); err != nil {
+		return 0, fmt.Errorf("%s: %w", path, err)
+	}
+	return 0, fmt.Errorf("%s: no MemTotal line", path)
+}
+
+func DefaultBudgetMiB() uint32 {
+	total, err := hostMemTotalMiB(meminfoPath)
+	if err != nil {
+		return FallbackHostBudgetMiB
+	}
+	return uint32(uint64(total) / HostBudgetDivisor)
 }
 
 func Budget() (uint32, error) {
 	raw, ok := os.LookupEnv(BudgetEnvVar)
 	if !ok || raw == "" {
-		return DefaultHostBudgetMiB, nil
+		derived := DefaultBudgetMiB()
+		if derived == 0 {
+			return 0, fmt.Errorf("%w: host RAM yields a zero default budget; set %s", ErrBudgetInvalid, BudgetEnvVar)
+		}
+		return derived, nil
 	}
 	n, err := strconv.ParseUint(raw, 10, 32)
 	if err != nil || n == 0 {
