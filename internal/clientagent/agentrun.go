@@ -53,6 +53,7 @@ func RunLocalAgent(ctx context.Context, args []string, _ io.Writer, errW io.Writ
 		HostName:    *host,
 		Poll:        poll,
 		Run:         portfwd.OSRunner,
+		Report:      func(s string) { fmt.Fprintln(errW, s) },
 	}
 	if err := a.Serve(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		fmt.Fprintln(errW, err)

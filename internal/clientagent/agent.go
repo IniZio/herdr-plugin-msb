@@ -2,6 +2,7 @@ package clientagent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -21,15 +22,46 @@ type Agent struct {
 	Poll        time.Duration
 	TTL         time.Duration
 	Run         portfwd.Runner
+	Report      func(string)
 
 	applied   map[uint64]struct{}
 	specs     map[uint64]string
+	reported  map[uint64]struct{}
 	lastAcked uint64
 	seeded    bool
 }
 
+func (a *Agent) ServedHost() string {
+	if a.HostName != "" {
+		return a.HostName
+	}
+	t := a.Target
+	if i := strings.LastIndex(t, "@"); i >= 0 {
+		t = t[i+1:]
+	}
+	return t
+}
+
 func (a *Agent) IsOurs(r Request) bool {
-	return r.Host == "" || r.Host == a.HostName
+	return r.Host == "" || r.Host == a.ServedHost()
+}
+
+func (a *Agent) report(format string, args ...any) {
+	if a.Report == nil {
+		return
+	}
+	a.Report(fmt.Sprintf(format, args...))
+}
+
+func (a *Agent) reportOnce(id uint64, format string, args ...any) {
+	if a.reported == nil {
+		a.reported = make(map[uint64]struct{})
+	}
+	if _, ok := a.reported[id]; ok {
+		return
+	}
+	a.reported[id] = struct{}{}
+	a.report(format, args...)
 }
 
 func (a *Agent) EnsureMaster(ctx context.Context) error {
@@ -99,21 +131,28 @@ func (a *Agent) Tick(ctx context.Context, now time.Time) (applied []uint64, sett
 		if r.ID <= a.lastAcked {
 			continue
 		}
-		if !a.IsOurs(r) || r.CreatedUnixMS < cutoffMS {
-			cursor = r.ID
-			continue
-		}
 		if _, ok := a.applied[r.ID]; ok {
 			cursor = r.ID
 			continue
 		}
+		if !a.IsOurs(r) {
+			a.reportOnce(r.ID, "clientagent: request %d declares host %q but this agent serves %q; not applied and not acked", r.ID, r.Host, a.ServedHost())
+			break
+		}
+		if r.CreatedUnixMS < cutoffMS {
+			a.reportOnce(r.ID, "clientagent: request %d is expired (created_unix_ms=%d, cutoff=%d, ttl=%s); not applied and not acked", r.ID, r.CreatedUnixMS, cutoffMS, ttl)
+			break
+		}
 		spec := ForwardSpec(r)
 		_, fwdErr, fwdCode, fwdRun := a.Run(ctx, ForwardArgv(a.Target, a.ControlPath, spec))
 		if fwdRun != nil || fwdCode != 0 {
-			if fwdRun == nil {
-				fwdRun = fmt.Errorf("clientagent: ssh -O forward: exit %d: %s", fwdCode, strings.TrimSpace(fwdErr))
+			detail := strings.TrimSpace(fwdErr)
+			if fwdRun != nil {
+				err = fmt.Errorf("clientagent: request %d: ssh -O forward -L %s: %w: %s", r.ID, spec, fwdRun, detail)
+			} else {
+				err = fmt.Errorf("clientagent: request %d: ssh -O forward -L %s: exit %d: %s", r.ID, spec, fwdCode, detail)
 			}
-			err = fwdRun
+			a.report("%v", err)
 			break
 		}
 		a.applied[r.ID] = struct{}{}
@@ -122,7 +161,10 @@ func (a *Agent) Tick(ctx context.Context, now time.Time) (applied []uint64, sett
 		cursor = r.ID
 	}
 	if cursor > a.lastAcked {
-		_, _, _, _ = a.Run(ctx, ExecArgv(a.Target, a.ControlPath, RemoteMarkCommand(cursor)))
+		_, markStderr, markCode, markRun := a.Run(ctx, ExecArgv(a.Target, a.ControlPath, RemoteMarkCommand(cursor)))
+		if markRun != nil || markCode != 0 {
+			a.report("clientagent: ack write for id %d failed: exit %d: %s %v", cursor, markCode, strings.TrimSpace(markStderr), markRun)
+		}
 		a.lastAcked = cursor
 	}
 	return applied, cursor, err
@@ -158,9 +200,14 @@ func (a *Agent) Serve(ctx context.Context) error {
 	backoff := poll
 	maxBackoff := 60 * time.Second
 	consec := 0
+	lastReported := ""
 	for {
 		_, _, tickErr := a.Tick(ctx, time.Now())
 		if tickErr != nil {
+			if !errors.Is(tickErr, context.Canceled) && tickErr.Error() != lastReported {
+				a.report("%v", tickErr)
+				lastReported = tickErr.Error()
+			}
 			consec++
 			if consec > 1 {
 				backoff *= 2
@@ -171,6 +218,7 @@ func (a *Agent) Serve(ctx context.Context) error {
 		} else {
 			consec = 0
 			backoff = poll
+			lastReported = ""
 		}
 		select {
 		case <-ctx.Done():

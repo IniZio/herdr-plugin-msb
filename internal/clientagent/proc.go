@@ -18,6 +18,10 @@ func AgentPidPath(stateDir, target string) string {
 	return filepath.Join(stateDir, target+".agent.pid")
 }
 
+func AgentLogPath(stateDir, target string) string {
+	return filepath.Join(stateDir, target+".agent.log")
+}
+
 func readPid(path string) (int, bool) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -66,6 +70,13 @@ func SpawnIfAbsent(stateDir, selfBin, target string) (int, error) {
 	return spawnIfAbsent(stateDir, target, func(t string) (int, error) {
 		cmd := exec.Command(selfBin, "local-agent", "--target", t)
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		lf, err := os.OpenFile(AgentLogPath(stateDir, t), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		if err != nil {
+			return 0, fmt.Errorf("open agent log: %w", err)
+		}
+		defer lf.Close()
+		cmd.Stdout = lf
+		cmd.Stderr = lf
 		if err := cmd.Start(); err != nil {
 			return 0, err
 		}
