@@ -1,5 +1,6 @@
 /herdr-plugin-msb
 /herdr-plugin-msb-agent
+/distcheck
 *.test
 *.out
 /vendor/

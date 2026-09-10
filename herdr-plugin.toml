@@ -8,6 +8,10 @@ platforms = ["linux", "macos"]
 command = ["make", "build"]
 platforms = ["linux"]
 
+[[build]]
+command = ["sh", "-c", "ARCH=$(uname -m | sed 's/x86_64/amd64/'); cp dist/herdr-plugin-msb-linux-amd64 herdr-plugin-msb && cp dist/herdr-plugin-msb-agent-darwin-${ARCH} herdr-plugin-msb-agent && chmod +x herdr-plugin-msb herdr-plugin-msb-agent"]
+platforms = ["macos"]
+
 [[panes]]
 id = "shell"
 title = "Microsandbox guest shell"

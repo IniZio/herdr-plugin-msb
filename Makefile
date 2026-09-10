@@ -1,4 +1,4 @@
-.PHONY: build typecheck install vet test test-capped
+.PHONY: build typecheck install vet dist dist-check test test-capped
 
 GOMAXPROCS      ?= 4
 GOBUILD_P       ?= 4
@@ -41,9 +41,20 @@ install: build
 	mv -f $(INSTALL_DIR)/herdr-plugin-msb-agent.new $(INSTALL_DIR)/herdr-plugin-msb-agent
 	@echo "OK: installed herdr-plugin-msb and herdr-plugin-msb-agent → $(INSTALL_DIR)"
 
+dist:
+	@mkdir -p dist
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -o dist/herdr-plugin-msb-agent-darwin-arm64 ./cmd/herdr-plugin-msb-agent
+	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath -o dist/herdr-plugin-msb-agent-darwin-amd64 ./cmd/herdr-plugin-msb-agent
+	go build -trimpath -o dist/herdr-plugin-msb-linux-amd64 ./cmd/herdr-plugin-msb
+	go run ./tools/distcheck . --write
+
+dist-check:
+	go run ./tools/distcheck .
+
 vet:
 	go vet -p $(GOBUILD_P) ./...
 	go run ./tools/importban .
+	go run ./tools/distcheck .
 
 test:
 	@scripts/test-session.sh $(MAKE) test-capped

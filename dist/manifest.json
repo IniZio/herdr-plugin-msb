@@ -1,0 +1,8 @@
+{
+  "source_commit": "747198980b9e0217a0e80b5a0f25fba602f30f0c",
+  "artifacts": {
+    "herdr-plugin-msb-agent-darwin-amd64": "fda0304fb0e2234136f974221d177262312d6a59e13ccd350fad7b6979b92bb8",
+    "herdr-plugin-msb-agent-darwin-arm64": "eb18543352c04acc5f2ea6db495bac2e75d9ecdaeacc57553bcdf12ce4910fb5",
+    "herdr-plugin-msb-linux-amd64": "bfd84f30352b707437388b129b85a5b0cb56da53c4771bd6d7dfef3dd1072b44"
+  }
+}
