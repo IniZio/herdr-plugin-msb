@@ -1,8 +1,8 @@
 id = "herdr-plugin-msb"
 name = "Microsandbox"
 version = "0.1.0"
-min_herdr_version = "0.8.0"
-platforms = ["linux"]
+min_herdr_version = "0.9.0"
+platforms = ["linux", "macos"]
 
 [[build]]
 command = ["make", "build"]
