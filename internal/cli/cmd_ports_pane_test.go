@@ -33,8 +33,8 @@ func TestRenderPortsPane_NoLaunchd(t *testing.T) {
 	if strings.Contains(out, "Install local agent") {
 		t.Errorf("nil-state text must not mention Install local agent: %q", out)
 	}
-	if !strings.Contains(out, "herdr --remote") {
-		t.Errorf("nil-state text must mention herdr --remote: %q", out)
+	if !strings.Contains(out, "herdr-plugin-msb attach") {
+		t.Errorf("nil-state text must mention herdr-plugin-msb attach: %q", out)
 	}
 }
 

@@ -23,28 +23,33 @@ See §5.
 
 ---
 
-## 1. One-time setup: the zshrc shim
+## 1. One-time setup: install the plugin
 
-The plugin wraps the `herdr` command to intercept `--remote` invocations and
-attach the port-forwarding agent before handing off. Add these two lines to
-`~/.zshrc`:
+Build and install the binary:
 
-```zsh
-_HERDR_BIN=$(command -v herdr 2>/dev/null || true)
-herdr() { HERDR_BIN="$_HERDR_BIN" herdr-plugin-msb wrap-herdr "$@"; }
+```sh
+make install          # builds and copies to ~/.local/bin/herdr-plugin-msb
 ```
 
-After sourcing your shell config (or opening a new terminal), type
-`herdr --remote engine-03` exactly as before. The shim is transparent for
-all non-remote invocations.
+Register the plugin with herdr (run once, and after any binary update):
 
-**Why a PATH shim cannot work:** placing a script named `herdr` on PATH causes
-`wrap-herdr`'s own binary lookup to find and re-enter the shim, recursing.
-Capturing the real binary path into `_HERDR_BIN` before the function is
-declared avoids this.
+```sh
+herdr plugin install --path ~/.local/bin/herdr-plugin-msb
+herdr server reload-config
+```
 
-**Honestly:** the original operator requirement was no manual install. This
-one-time shell edit is the closest achievable without a system-level hook.
+`~/.local/bin` must be on your `PATH`. No shell rc edits are required.
+
+To start a session with port forwarding enabled, run:
+
+```sh
+herdr-plugin-msb attach <user@engine>
+```
+
+This starts the local agent, waits for it to connect, then runs
+`herdr --remote <user@engine>` as a child on the inherited terminal.
+When the session ends (or is interrupted), the agent and the SSH master
+are torn down automatically. No orphaned processes remain.
 
 ---
 
@@ -111,14 +116,14 @@ Port forwards — (no sandbox)
   laptop agent not connected
   forwards.state not found
 
-  Run: herdr --remote <target>  (starts agent via the zshrc shim)
+  Run: herdr-plugin-msb attach <target>
   Setup: doc/portfwd-operator-guide.md §1
 
   q  close pane
 ```
 
-The agent is started automatically by `herdr --remote <target>` once the
-zshrc shim from §1 is in place. If it still does not connect, see §6.
+The agent is started automatically by `herdr-plugin-msb attach <target>`.
+If it still does not connect, see §6.
 
 **Agent connected, no ports in state:**
 

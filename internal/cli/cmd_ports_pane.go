@@ -79,7 +79,7 @@ func RenderPortsPane(state *ForwardsState, cursor int, now time.Time) string {
 			paneSep + "\n" +
 			"  laptop agent not connected\n" +
 			"  forwards.state not found\n\n" +
-			"  Run: herdr --remote <target>  (starts agent via the zshrc shim)\n" +
+			"  Run: herdr-plugin-msb attach <target>\n" +
 			"  Setup: doc/portfwd-operator-guide.md §1\n\n" +
 			"  q  close pane\n"
 	}

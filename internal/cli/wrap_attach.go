@@ -115,7 +115,53 @@ func teardownSession(run portfwd.Runner, agentPid int, pidPath, target, ctlPath 
 	run(ctx, []string{"ssh", "-S", ctlPath, "-O", "exit", target}) //nolint:errcheck
 }
 
+func RunAttach(ctx context.Context, args []string, _ io.Writer, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "usage: herdr-plugin-msb attach <target> [herdr args...]")
+		return 2
+	}
+	target := args[0]
+	herdrArgs := append([]string{"--remote", target}, args[1:]...)
+	herdrBin, err := resolveHerdrBin()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	stateDir, err := StateDir(os.Getenv)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	selfBin, err := os.Executable()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	agentPid, err := SpawnIfAbsent(stateDir, selfBin, target)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	ctlPath := ControlPathFor(stateDir, target)
+	if err := WaitForSocket(ctlPath, 15*time.Second); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	cmd := exec.CommandContext(ctx, herdrBin, herdrArgs...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	_ = cmd.Run()
+	code := 0
+	if cmd.ProcessState != nil {
+		code = cmd.ProcessState.ExitCode()
+	}
+	teardownSession(portfwd.OSRunner, agentPid, AgentPidPath(stateDir, target), target, ctlPath)
+	return code
+}
+
 func RunWrapHerdr(ctx context.Context, args []string, _ io.Writer, stderr io.Writer) int {
+	fmt.Fprintln(stderr, "wrap-herdr: deprecated; use: herdr-plugin-msb attach <target>")
 	herdrBin, err := resolveHerdrBin()
 	if err != nil {
 		fmt.Fprintln(stderr, err)

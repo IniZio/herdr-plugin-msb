@@ -538,7 +538,7 @@ func runFwdSync(ctx context.Context, args []string, out, errW io.Writer) int {
 	return 0
 }
 
-const pluginUsage = "usage: herdr-plugin-msb <command>\n\ncommands: declare  status  list  local-agent  fwd-sync  wrap-herdr  help"
+const pluginUsage = "usage: herdr-plugin-msb <command>\n\ncommands: declare  status  list  local-agent  fwd-sync  attach  wrap-herdr  help"
 
 func RunHerdrPlugin(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
 	if len(argv) == 0 {

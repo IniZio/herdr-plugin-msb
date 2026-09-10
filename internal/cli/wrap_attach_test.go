@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -233,6 +234,34 @@ func nthOrEmpty(s []string, n int) string {
 		return s[n]
 	}
 	return ""
+}
+
+func TestRunAttachNoTarget(t *testing.T) {
+	var stderr bytes.Buffer
+	code := RunAttach(context.Background(), nil, nil, &stderr)
+	if code != 2 {
+		t.Errorf("exit code = %d; want 2", code)
+	}
+	if !strings.Contains(stderr.String(), "usage") {
+		t.Errorf("stderr %q missing usage", stderr.String())
+	}
+}
+
+func TestRunAttachMissingHerdrBin(t *testing.T) {
+	t.Setenv("HERDR_BIN", "")
+	t.Setenv("HERDR_BIN_PATH", "")
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", "")
+	defer t.Setenv("PATH", origPath)
+
+	var stderr bytes.Buffer
+	code := RunAttach(context.Background(), []string{"engine-03"}, nil, &stderr)
+	if code != 1 {
+		t.Errorf("exit code = %d; want 1 (stderr: %q)", code, stderr.String())
+	}
+	if stderr.Len() == 0 {
+		t.Error("stderr empty; expected error message")
+	}
 }
 
 var _ = syscall.Flock
