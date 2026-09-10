@@ -28,6 +28,7 @@ endef
 
 build:
 	$(call CAPPED,go build -p $(GOBUILD_P) -o herdr-plugin-msb ./cmd/herdr-plugin-msb)
+	$(call CAPPED,go build -p $(GOBUILD_P) -o herdr-plugin-msb-agent ./cmd/herdr-plugin-msb-agent)
 
 typecheck:
 	$(call CAPPED,go build -p $(GOBUILD_P) ./...)
@@ -36,7 +37,9 @@ install: build
 	@mkdir -p $(INSTALL_DIR)
 	cp herdr-plugin-msb $(INSTALL_DIR)/herdr-plugin-msb.new
 	mv -f $(INSTALL_DIR)/herdr-plugin-msb.new $(INSTALL_DIR)/herdr-plugin-msb
-	@echo "OK: herdr-plugin-msb installed → $(INSTALL_DIR)/herdr-plugin-msb"
+	cp herdr-plugin-msb-agent $(INSTALL_DIR)/herdr-plugin-msb-agent.new
+	mv -f $(INSTALL_DIR)/herdr-plugin-msb-agent.new $(INSTALL_DIR)/herdr-plugin-msb-agent
+	@echo "OK: installed herdr-plugin-msb and herdr-plugin-msb-agent → $(INSTALL_DIR)"
 
 vet:
 	go vet -p $(GOBUILD_P) ./...

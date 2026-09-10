@@ -92,7 +92,7 @@ contexts = ["workspace"]
 platforms = ["linux"]
 
 [[startup]]
-command = ["herdr-plugin-msb", "local-agent-startup"]
+command = ["herdr-plugin-msb-agent", "local-agent-startup"]
 platforms = ["linux", "macos"]
 
 [[link_handlers]]

@@ -1,4 +1,4 @@
-package cli
+package clientagent
 
 import (
 	"bytes"
@@ -37,8 +37,6 @@ var localAgentSpawnFn = func(stateDir, selfBin, target string) (int, error) {
 	return SpawnIfAbsent(stateDir, selfBin, target)
 }
 
-// LocalAgentStartupTeardownFn is the seam for per-machine teardown on shutdown.
-// Slice m04 wires the actual policy (which signal ends a forward is an open question).
 var LocalAgentStartupTeardownFn = func(_ string, _ []portfwd.Machine) {}
 
 var localAgentParentDiedFn = func(ctx context.Context) <-chan struct{} {

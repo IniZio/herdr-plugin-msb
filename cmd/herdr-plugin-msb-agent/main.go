@@ -1,5 +1,3 @@
-//go:build linux
-
 package main
 
 import (
@@ -8,11 +6,11 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/IniZio/herdr-plugin-msb/internal/cli"
+	"github.com/IniZio/herdr-plugin-msb/internal/clientagent"
 )
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT)
 	defer stop()
-	os.Exit(cli.Run(ctx, cli.NormalizeArgv(os.Args[0], os.Args[1:]), os.Stdout, os.Stderr))
+	os.Exit(clientagent.AgentRun(ctx, os.Args[1:], os.Stdout, os.Stderr))
 }
