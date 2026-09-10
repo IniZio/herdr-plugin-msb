@@ -1,5 +1,5 @@
 {
-  "source_commit": "747198980b9e0217a0e80b5a0f25fba602f30f0c",
+  "source_commit": "1df4ef152fe872a32e9d558e10a5a8e0e94ba765",
   "artifacts": {
     "herdr-plugin-msb-agent-darwin-amd64": "fda0304fb0e2234136f974221d177262312d6a59e13ccd350fad7b6979b92bb8",
     "herdr-plugin-msb-agent-darwin-arm64": "eb18543352c04acc5f2ea6db495bac2e75d9ecdaeacc57553bcdf12ce4910fb5",
