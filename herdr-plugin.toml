@@ -97,7 +97,7 @@ contexts = ["workspace"]
 platforms = ["linux"]
 
 [[startup]]
-command = ["herdr-plugin-msb-agent", "local-agent-startup"]
+command = ["sh", "-c", 'exec "$HERDR_PLUGIN_ROOT/herdr-plugin-msb-agent" local-agent-startup']
 platforms = ["linux", "macos"]
 
 [[link_handlers]]

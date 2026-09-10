@@ -69,14 +69,48 @@ still spawned.
 Tested in `TestProvisionNoConsent`: negative control confirmed Copy IS called
 when consent is given.
 
-## No-Go-on-Mac: open distribution question
+## The startup hook must not resolve the agent through PATH
+
+Option A below is implemented: `dist/` carries the cross-compiled agent and the
+macOS `[[build]]` step copies it into the plugin root. That settles *delivery*,
+but it did not settle *resolution*, and the two were conflated for several days.
+
+`[[startup]]` declared `command = ["herdr-plugin-msb-agent", "local-agent-startup"]`.
+herdr resolves a bare command name against `PATH`, exactly as it resolves a
+relative path against the pane's `--cwd` rather than the plugin root. Nothing
+ever put that binary on `PATH`: the macOS `[[build]]` step writes it to the
+plugin root, and `make install` — which does install both binaries to
+`~/.local/bin` — is never run on macOS, and had not been re-run on the Linux
+engine since the agent binary was added. The hook died with exit 127 before
+reaching any of its own code, on both platforms.
+
+Nothing reported this. `herdr plugin log --plugin herdr-plugin-msb` held zero
+entries on the engine, which reads identically to "no startup has occurred yet".
+The failure was first seen only when an operator typed the bare name in a shell
+and got `command not found`.
+
+The fix is the form the shell pane in the same manifest already used:
+
+    command = ["sh", "-c", 'exec "$HERDR_PLUGIN_ROOT/herdr-plugin-msb-agent" local-agent-startup']
+
+`HERDR_PLUGIN_ROOT` is set for startup hooks — `startup.go` and `agentrun.go`
+already read it to locate the binaries they ship to an engine — so this needs no
+`PATH` contribution from the operator on either platform.
+
+Proven by two runs with opposite outcomes: with `HERDR_PLUGIN_ROOT` unset, the
+bare name exits 127 `not found`; the `$HERDR_PLUGIN_ROOT` form exits 0.
+`TestManifestStartupCommandDoesNotDependOnPATH` guards the manifest, and was
+mutation-proven — RED against the old command line, GREEN against the new one.
+Both runs went through `make test`: run directly, `go test ./internal/cli/`
+aborts on the suite's isolation guard, and a naive RED/GREEN pair both "fail"
+for that reason while asserting nothing.
+
+## No-Go-on-Mac: the distribution options as they were weighed
 
 `[[build]]` now carries `platforms = ["linux"]`. herdr will not run `make build`
 on macOS, eliminating the Go toolchain requirement there.
 
-However, `[[startup]]` on macOS still requires `herdr-plugin-msb-agent` in PATH.
-Without `make build` running on macOS, the binary must arrive another way. Three
-options:
+The binary must therefore arrive another way. Three options:
 
 **A. Commit prebuilt binaries in the repo** (recommended for now): cross-compile
 `herdr-plugin-msb-agent` for `darwin/arm64` and `darwin/amd64` at release time
@@ -95,10 +129,7 @@ code path; violates the operator constraint and is ruled out.
 or B, this path will not exist and provisioning returns `ErrNoSourceBinary`.
 Option A (include the Linux binary in `dist/`) resolves this too.
 
-Until option A or B is implemented, the Mac operator must manually install
-`herdr-plugin-msb-agent`, for example:
-
-    GOOS=darwin GOARCH=arm64 go build -o herdr-plugin-msb-agent ./cmd/herdr-plugin-msb-agent
+Option A is implemented, so no manual build is required on the Mac.
 
 ## What remains unproven
 
