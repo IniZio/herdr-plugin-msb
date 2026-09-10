@@ -19,6 +19,20 @@ var execHerdrFn = func(bin string, argv, env []string) error {
 	return syscall.Exec(bin, argv, env)
 }
 
+var runHerdrChildFn = func(ctx context.Context, bin string, args []string) int {
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	_ = cmd.Run()
+	if cmd.ProcessState != nil {
+		return cmd.ProcessState.ExitCode()
+	}
+	return 0
+}
+
+var attachRunnerFn portfwd.Runner = portfwd.OSRunner
+
 func ExtractRemoteTarget(args []string) (string, bool) {
 	for i, a := range args {
 		for _, prefix := range []string{"--remote=", "-remote="} {
@@ -147,16 +161,8 @@ func RunAttach(ctx context.Context, args []string, _ io.Writer, stderr io.Writer
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	cmd := exec.CommandContext(ctx, herdrBin, herdrArgs...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	_ = cmd.Run()
-	code := 0
-	if cmd.ProcessState != nil {
-		code = cmd.ProcessState.ExitCode()
-	}
-	teardownSession(portfwd.OSRunner, agentPid, AgentPidPath(stateDir, target), target, ctlPath)
+	code := runHerdrChildFn(ctx, herdrBin, herdrArgs)
+	teardownSession(attachRunnerFn, agentPid, AgentPidPath(stateDir, target), target, ctlPath)
 	return code
 }
 
