@@ -3,6 +3,7 @@ package clientagent
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	corepf "github.com/IniZio/herdr-plugin-msb/internal/core/portfwd"
 	"github.com/IniZio/herdr-plugin-msb/internal/portfwd"
 )
 
@@ -35,6 +37,27 @@ var localAgentDiscoverFn = func(ctx context.Context) ([]portfwd.Machine, error) 
 
 var localAgentSpawnFn = func(stateDir, selfBin, target string) (int, error) {
 	return SpawnIfAbsent(stateDir, selfBin, target)
+}
+
+var localAgentProvisionFn = func(ctx context.Context, stateDir string, m portfwd.Machine, stderr io.Writer) error {
+	cs := &ConsentStore{Dir: stateDir}
+	pluginRoot := os.Getenv("HERDR_PLUGIN_ROOT")
+	binSrc, pluginTOML := "", ""
+	if pluginRoot != "" {
+		binSrc = filepath.Join(pluginRoot, "herdr-plugin-msb")
+		pluginTOML = filepath.Join(pluginRoot, "herdr-plugin.toml")
+	}
+	p := &Provisioner{
+		Target:       m.SSHTarget,
+		BinSrc:       binSrc,
+		PluginTOML:   pluginTOML,
+		LocalVersion: PluginVersion,
+		CheckConsent: cs.CheckFn,
+		Run:          corepf.OSRunner,
+		Copy:         SCPCopy,
+		Stderr:       stderr,
+	}
+	return p.EnsureProvisioned(ctx)
 }
 
 var LocalAgentStartupTeardownFn = func(_ string, _ []portfwd.Machine) {}
@@ -95,6 +118,11 @@ func RunLocalAgentStartup(ctx context.Context, _ []string, _ io.Writer, stderr i
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
+	}
+	for _, m := range enabled {
+		if err := localAgentProvisionFn(ctx, stateDir, m, stderr); err != nil && !errors.Is(err, ErrNoConsent) {
+			fmt.Fprintf(stderr, "local-agent-startup: provision %s: %v\n", m.SSHTarget, err)
+		}
 	}
 	for _, m := range enabled {
 		if _, err := localAgentSpawnFn(stateDir, selfBin, m.SSHTarget); err != nil {

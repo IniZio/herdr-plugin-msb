@@ -6,6 +6,7 @@ platforms = ["linux", "macos"]
 
 [[build]]
 command = ["make", "build"]
+platforms = ["linux"]
 
 [[panes]]
 id = "shell"

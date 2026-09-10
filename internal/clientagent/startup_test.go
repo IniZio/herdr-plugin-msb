@@ -3,6 +3,7 @@ package clientagent
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -168,5 +169,43 @@ func TestLocalAgentStartupOnlyEnabledServed(t *testing.T) {
 	}
 	if spawned[0] != "enabled-host" {
 		t.Fatalf("want spawn for enabled-host, got %q", spawned[0])
+	}
+}
+
+func TestLocalAgentStartupProvisions(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", dir)
+
+	var provisioned []string
+	prevProv := localAgentProvisionFn
+	localAgentProvisionFn = func(_ context.Context, _ string, m portfwd.Machine, _ io.Writer) error {
+		provisioned = append(provisioned, m.SSHTarget)
+		return nil
+	}
+	defer func() { localAgentProvisionFn = prevProv }()
+
+	prevD := localAgentDiscoverFn
+	localAgentDiscoverFn = func(_ context.Context) ([]portfwd.Machine, error) {
+		return []portfwd.Machine{{SSHTarget: "engine-host", Enabled: true}}, nil
+	}
+	defer func() { localAgentDiscoverFn = prevD }()
+
+	prevS := localAgentSpawnFn
+	localAgentSpawnFn = func(_, _, _ string) (int, error) { return 999, nil }
+	defer func() { localAgentSpawnFn = prevS }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var stderr bytes.Buffer
+	code := RunLocalAgentStartup(ctx, nil, nil, &stderr)
+	if code != 0 {
+		t.Fatalf("want exit 0, got %d; stderr: %s", code, stderr.String())
+	}
+	if len(provisioned) != 1 {
+		t.Fatalf("want 1 provision call, got %d: %v", len(provisioned), provisioned)
+	}
+	if provisioned[0] != "engine-host" {
+		t.Fatalf("want provision for engine-host, got %q", provisioned[0])
 	}
 }

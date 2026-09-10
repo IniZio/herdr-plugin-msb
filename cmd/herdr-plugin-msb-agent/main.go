@@ -12,5 +12,5 @@ import (
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT)
 	defer stop()
-	os.Exit(clientagent.AgentRun(ctx, os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(clientagent.AgentRun(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
