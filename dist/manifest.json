@@ -1,8 +1,8 @@
 {
-  "source_commit": "1df4ef152fe872a32e9d558e10a5a8e0e94ba765",
+  "source_commit": "8fed3abcdabc04d465e50ae6b263b1b41a8ac435",
   "artifacts": {
-    "herdr-plugin-msb-agent-darwin-amd64": "fda0304fb0e2234136f974221d177262312d6a59e13ccd350fad7b6979b92bb8",
-    "herdr-plugin-msb-agent-darwin-arm64": "eb18543352c04acc5f2ea6db495bac2e75d9ecdaeacc57553bcdf12ce4910fb5",
-    "herdr-plugin-msb-linux-amd64": "bfd84f30352b707437388b129b85a5b0cb56da53c4771bd6d7dfef3dd1072b44"
+    "herdr-plugin-msb-agent-darwin-amd64": "319533a5121620e198c25150f1fdef0244c3a45b7b9138d8efe0017524acbf41",
+    "herdr-plugin-msb-agent-darwin-arm64": "b498c48a9cffcfc76055c93deace94317d02c2c4b3c0d66071c7173614e66a58",
+    "herdr-plugin-msb-linux-amd64": "832de668abf6f9c52905d2669386e6bf46a718cfe77d2753d438d913ff071b1f"
   }
 }
