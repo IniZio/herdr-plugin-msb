@@ -60,7 +60,64 @@ var localAgentProvisionFn = func(ctx context.Context, stateDir string, m portfwd
 	return p.EnsureProvisioned(ctx)
 }
 
-var LocalAgentStartupTeardownFn = func(_ string, _ []portfwd.Machine) {}
+const selectionPollInterval = 30 * time.Second
+
+var localAgentTeardownMachineFn = func(stateDir string, m portfwd.Machine) {
+	pidPath := AgentPidPath(stateDir, m.SSHTarget)
+	ctlPath := ControlPathFor(stateDir, m.SSHTarget)
+	pid, ok := readPid(pidPath)
+	if !ok || !isAlive(pid) {
+		return
+	}
+	teardownSession(corepf.OSRunner, pid, pidPath, m.SSHTarget, ctlPath)
+}
+
+var LocalAgentStartupTeardownFn = func(stateDir string, machines []portfwd.Machine) {
+	for _, m := range machines {
+		localAgentTeardownMachineFn(stateDir, m)
+	}
+}
+
+func monitorSelection(
+	ctx context.Context,
+	stateDir string,
+	initial []portfwd.Machine,
+	discover func(context.Context) ([]portfwd.Machine, error),
+	teardown func(string, portfwd.Machine),
+	interval time.Duration,
+) {
+	selected := make(map[string]bool, len(initial))
+	for _, m := range initial {
+		selected[m.SSHTarget] = m.Selected
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		machines, err := discover(ctx)
+		if err != nil {
+			continue
+		}
+		current := make(map[string]bool, len(machines))
+		for _, m := range machines {
+			current[m.SSHTarget] = m.Selected
+		}
+		for _, m := range initial {
+			was := selected[m.SSHTarget]
+			now := current[m.SSHTarget]
+			if was && !now {
+				teardown(stateDir, m)
+				selected[m.SSHTarget] = false
+			} else if !was && now {
+				selected[m.SSHTarget] = true
+			}
+		}
+	}
+}
 
 var localAgentParentDiedFn = func(ctx context.Context) <-chan struct{} {
 	ch := make(chan struct{})
@@ -132,6 +189,7 @@ func RunLocalAgentStartup(ctx context.Context, _ []string, _ io.Writer, stderr i
 	sigCtx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGHUP, os.Interrupt)
 	defer stop()
 	parentDied := localAgentParentDiedFn(sigCtx)
+	go monitorSelection(sigCtx, stateDir, enabled, localAgentDiscoverFn, localAgentTeardownMachineFn, selectionPollInterval)
 	select {
 	case <-sigCtx.Done():
 	case <-parentDied:
